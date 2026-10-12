@@ -50,6 +50,8 @@ import java.util.Map;
 import java.util.Locale;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.Collections;
+import java.util.HashSet;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -119,6 +121,8 @@ public final class MainActivity extends Activity {
     private VelocityTracker drawerVelocity;
     private RadarSync.Result lastResult;
     private final Map<String, RadarSync.Result> accountResults = new LinkedHashMap<>();
+    private final Set<String> unverifiedSessions =
+            Collections.synchronizedSet(new HashSet<>());
     private SessionVault vault;
     private Platform currentPlatform;
     private boolean moocCourseMode;
@@ -451,10 +455,16 @@ public final class MainActivity extends Activity {
     }
 
     private void updatePlatformLabels() {
-        moocCheck.setText("MOOC　" + (vault.contains(key(Platform.MOOC)) ? "已认证 ✓" : "未认证"));
-        yanheCheck.setText("延河课堂　" + (vault.contains(key(Platform.YANHE)) ? "已认证 ✓" : "未认证"));
-        zhiyuanCheck.setText("智园课堂　" + (vault.contains(key(Platform.ZHIYUAN)) ? "已认证 ✓" : "未认证"));
+        moocCheck.setText("MOOC　" + authenticationLabel(Platform.MOOC));
+        yanheCheck.setText("延河课堂　" + authenticationLabel(Platform.YANHE));
+        zhiyuanCheck.setText("智园课堂　" + authenticationLabel(Platform.ZHIYUAN));
         statusText.setText(sessionSummary());
+    }
+
+    private String authenticationLabel(Platform platform) {
+        String sessionKey = key(platform);
+        if (!vault.contains(sessionKey)) return "未认证";
+        return unverifiedSessions.contains(sessionKey) ? "待联网验证 …" : "已认证 ✓";
     }
 
     private void chooseAvatar() {
@@ -569,6 +579,7 @@ public final class MainActivity extends Activity {
         SharedPreferences prefs = getSharedPreferences(PROFILE_PREFS, MODE_PRIVATE);
         activeAccount = prefs.getString("active_account", "default");
         migrateLegacyDefaultSessions(activeAccount);
+        markAllSavedSessionsUnverified();
         String name = prefs.getString("nickname_" + accountId(activeAccount), activeAccount);
         nameInput.setText(name);
         profileTitle.setText(name);
@@ -612,6 +623,7 @@ public final class MainActivity extends Activity {
         ensureAccountRegistered(name);
         activeAccount = name;
         migrateLegacyDefaultSessions(name);
+        markSavedSessionsUnverified(name);
         if (syncFuture != null) syncFuture.cancel(true);
         accountPasswordInput.setText("");
         synchronized (accountResults) {
@@ -635,7 +647,9 @@ public final class MainActivity extends Activity {
     }
 
     private void clearPlatformAuthentication(Platform platform) {
-        vault.remove(keyFor(activeAccount, platform));
+        String sessionKey = keyFor(activeAccount, platform);
+        vault.remove(sessionKey);
+        unverifiedSessions.remove(sessionKey);
         expireCookies(platform.loginUrl);
         expireCookies(platform.checkUrl);
         if (platform == Platform.MOOC) moocCsrfKey = null;
@@ -814,9 +828,9 @@ public final class MainActivity extends Activity {
             Button button = new Button(this);
             button.setAllCaps(false);
             StringBuilder state = new StringBuilder();
-            if (vault.contains(keyFor(account, Platform.MOOC))) state.append("MOOC✓ ");
-            if (vault.contains(keyFor(account, Platform.YANHE))) state.append("延河✓ ");
-            if (vault.contains(keyFor(account, Platform.ZHIYUAN))) state.append("智园✓");
+            appendAccountState(state, account, Platform.MOOC, "MOOC");
+            appendAccountState(state, account, Platform.YANHE, "延河");
+            appendAccountState(state, account, Platform.ZHIYUAN, "智园");
             button.setText((account.equals(activeAccount) ? "当前｜" : "") + account
                     + "｜" + (state.length() == 0 ? "未登录平台" : state.toString().trim()));
             button.setOnClickListener(view -> {
@@ -862,6 +876,7 @@ public final class MainActivity extends Activity {
                                 ? "已切换到 " + name + "，该账户尚未登录平台"
                                 : "已切换到 " + name + "，恢复了 " + count + " 个平台状态",
                         Toast.LENGTH_LONG).show();
+                validateSavedSessions();
             });
         });
     }
@@ -952,10 +967,33 @@ public final class MainActivity extends Activity {
     private String sessionSummary() {
         StringBuilder result = new StringBuilder("认证状态：");
         for (Platform platform : Platform.values()) {
-            result.append(platform.title)
-                    .append(vault.contains(key(platform)) ? " ✓  " : " —  ");
+            result.append(platform.title).append(' ')
+                    .append(authenticationLabel(platform)).append("  ");
         }
         return result.toString().trim();
+    }
+
+    private void appendAccountState(StringBuilder output, String account,
+                                    Platform platform, String title) {
+        String sessionKey = keyFor(account, platform);
+        if (!vault.contains(sessionKey)) return;
+        output.append(title).append(unverifiedSessions.contains(sessionKey) ? "… " : "✓ ");
+    }
+
+    private void markAllSavedSessionsUnverified() {
+        Set<String> accounts = new LinkedHashSet<>(getSharedPreferences(PROFILE_PREFS, MODE_PRIVATE)
+                .getStringSet("account_names", Collections.emptySet()));
+        accounts.add(activeAccount);
+        for (String account : accounts) {
+            markSavedSessionsUnverified(account);
+        }
+    }
+
+    private void markSavedSessionsUnverified(String account) {
+        for (Platform platform : Platform.values()) {
+            String sessionKey = keyFor(account, platform);
+            if (vault.contains(sessionKey)) unverifiedSessions.add(sessionKey);
+        }
     }
 
     private void confirmAuthentication() {
@@ -1003,6 +1041,7 @@ public final class MainActivity extends Activity {
                 payload.put("csrf_key", moocCsrfKey);
             }
             vault.put(keyFor(account, platform), payload.toString());
+            unverifiedSessions.remove(keyFor(account, platform));
             runOnUiThread(() -> {
                 authenticationSaveInProgress = false;
                 if (!account.equals(activeAccount)) return;
@@ -1014,6 +1053,9 @@ public final class MainActivity extends Activity {
                 updatePlatformLabels();
             });
         } catch (Exception error) {
+            if (vault.contains(keyFor(account, platform))) {
+                unverifiedSessions.add(keyFor(account, platform));
+            }
             runOnUiThread(() -> {
                 authenticationSaveInProgress = false;
                 if (!account.equals(activeAccount)) return;
@@ -1056,11 +1098,24 @@ public final class MainActivity extends Activity {
         connection.setRequestProperty("Cookie", cookies);
         connection.setRequestProperty("User-Agent", activeUserAgent);
         int status = connection.getResponseCode();
+        String finalUrl = connection.getURL().toString().toLowerCase(Locale.ROOT);
+        String contentType = connection.getContentType();
         InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
         String body = readAtMost(stream, 4096);
         connection.disconnect();
-        boolean looksLikeLogin = body.contains("统一身份认证") || body.contains("forcelogin");
-        return new Validation(status, status >= 200 && status < 300 && !looksLikeLogin);
+        String lowerBody = body.toLowerCase(Locale.ROOT);
+        boolean looksLikeLogin = body.contains("统一身份认证")
+                || lowerBody.contains("forcelogin")
+                || lowerBody.contains("login-form")
+                || lowerBody.contains("name=\"password\"")
+                || finalUrl.contains("/login")
+                || finalUrl.contains("/cas/")
+                || finalUrl.contains("oauth");
+        boolean apiRequest = address.contains("/api/") || address.contains("courseapi/");
+        boolean jsonPayload = body.trim().startsWith("{") || body.trim().startsWith("[")
+                || (contentType != null && contentType.toLowerCase(Locale.ROOT).contains("json"));
+        return new Validation(status, status >= 200 && status < 300 && !looksLikeLogin
+                && (!apiRequest || jsonPayload));
     }
 
     private static String readAtMost(InputStream stream, int limit) throws Exception {
@@ -1212,6 +1267,7 @@ public final class MainActivity extends Activity {
                     selectedYanheCookie, selectedZhiyuanCookie, DESKTOP_USER_AGENT);
             if (Thread.currentThread().isInterrupted()) return;
             result.savedAt = System.currentTimeMillis();
+            updateVerificationFromSync(syncAccount, result);
             clearExpiredAuthentication(result, syncAccount);
             result.tasks.sort((a, b) -> a.due.compareTo(b.due));
             int attempted = result.attemptedPlatforms.size();
@@ -1391,6 +1447,9 @@ public final class MainActivity extends Activity {
                     Validation validation = request(platform.checkUrl, cookie);
                     if (!validation.ok) {
                         vault.remove(keyFor(account, platform));
+                        unverifiedSessions.remove(keyFor(account, platform));
+                        changed = true;
+                    } else if (unverifiedSessions.remove(keyFor(account, platform))) {
                         changed = true;
                     }
                 } catch (Exception ignored) {
@@ -1402,6 +1461,20 @@ public final class MainActivity extends Activity {
                 if (stateChanged && account.equals(activeAccount)) updatePlatformLabels();
             });
         });
+    }
+
+    private void updateVerificationFromSync(String account, RadarSync.Result result) {
+        for (Platform platform : Platform.values()) {
+            String apiName = platform.name();
+            String sessionKey = keyFor(account, platform);
+            if (result.successfulPlatforms.contains(apiName)) {
+                unverifiedSessions.remove(sessionKey);
+            } else if (result.attemptedPlatforms.contains(apiName)
+                    && !result.invalidPlatforms.contains(apiName)
+                    && vault.contains(sessionKey)) {
+                unverifiedSessions.add(sessionKey);
+            }
+        }
     }
 
     private void saveResultCache(String account, RadarSync.Result result) {
@@ -1467,12 +1540,15 @@ public final class MainActivity extends Activity {
     private void clearExpiredAuthentication(RadarSync.Result result, String account) {
         if (result.invalidPlatforms.contains("MOOC")) {
             vault.remove(keyFor(account, Platform.MOOC));
+            unverifiedSessions.remove(keyFor(account, Platform.MOOC));
         }
         if (result.invalidPlatforms.contains("YANHE")) {
             vault.remove(keyFor(account, Platform.YANHE));
+            unverifiedSessions.remove(keyFor(account, Platform.YANHE));
         }
         if (result.invalidPlatforms.contains("ZHIYUAN")) {
             vault.remove(keyFor(account, Platform.ZHIYUAN));
+            unverifiedSessions.remove(keyFor(account, Platform.ZHIYUAN));
         }
     }
 
