@@ -1490,7 +1490,8 @@ public final class MainActivity extends Activity {
             }
             JSONArray tasks = new JSONArray();
             for (RadarSync.Task task : result.tasks) {
-                tasks.put(new JSONObject().put("course", task.course)
+                tasks.put(new JSONObject().put("platform", task.platform)
+                        .put("course", task.course)
                         .put("title", task.title).put("type", task.type)
                         .put("due", task.due).put("completed", task.completed)
                         .put("details", task.details));
@@ -1524,7 +1525,12 @@ public final class MainActivity extends Activity {
             for (int i = 0; tasks != null && i < tasks.length(); i++) {
                 JSONObject item = tasks.optJSONObject(i);
                 if (item == null) continue;
-                result.tasks.add(new RadarSync.Task(item.optString("course"),
+                String courseName = item.optString("course");
+                String platform = item.optString("platform");
+                if (TextUtils.isEmpty(platform)) {
+                    platform = inferTaskPlatform(result.courses, courseName);
+                }
+                result.tasks.add(new RadarSync.Task(platform, courseName,
                         item.optString("title"), item.optString("type"),
                         item.optString("due"), item.optBoolean("completed"),
                         item.optString("details")));
@@ -1535,6 +1541,16 @@ public final class MainActivity extends Activity {
                     .remove("result_cache_" + accountId(account)).apply();
             return null;
         }
+    }
+
+    private static String inferTaskPlatform(java.util.List<RadarSync.Course> courses,
+                                            String courseName) {
+        for (RadarSync.Course course : courses) {
+            if (course.name.equals(courseName)) {
+                return "MOOC".equals(course.platform) ? "MOOC" : "智园课堂";
+            }
+        }
+        return "平台未标注";
     }
 
     private void clearExpiredAuthentication(RadarSync.Result result, String account) {
@@ -1631,7 +1647,8 @@ public final class MainActivity extends Activity {
                 + ".view-select{width:100%;border:1px solid #e2e7ed;border-radius:10px;background:#fff;padding:12px 14px;font-size:14px;color:#374151;margin:-7px 0 18px}"
                 + ".task-root{margin:12px 0 21px}.task-root>summary{background:#eaf0ff;border:1px solid #dbe4ff;border-radius:11px;padding:12px 14px 12px 40px}.task-root>summary:before{left:14px}.task-root>summary h2{margin:0;display:inline-block}"
                 + ".task-category{margin:9px 0 9px 12px;border-left:2px solid #dce3ee;padding-left:10px}.task-category>summary{padding:8px 8px 8px 32px}.task-category>summary:before{left:8px;font-size:21px}.task-category>summary h3{font-size:15px;margin:0;display:inline-block}"
-                + "body.all-tasks .task-root,body.all-tasks .task-category{margin:0;border:0;padding:0}body.all-tasks .task-root>summary,body.all-tasks .task-category>summary{display:none}body.all-tasks .taskgroup{display:block!important}"
+                + ".task-view{display:none}body.view-time .time-view,body.view-platform .platform-view,body.all-tasks .time-view{display:block}"
+                + "body.all-tasks .time-view .task-root,body.all-tasks .time-view .task-category{margin:0;border:0;padding:0}body.all-tasks .time-view .task-root>summary,body.all-tasks .time-view .task-category>summary{display:none}body.all-tasks .time-view .taskgroup{display:block!important}"
                 + ".monthbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}.monthbar button{border:1px solid #e2e7ed;background:#fff;border-radius:9px;padding:9px 14px;font-size:16px;color:#263141}a{color:#315efb;text-decoration:none;font-weight:600}"
                 + "</style></head><body><h1>" + escape(title) + "</h1>";
     }
@@ -1641,15 +1658,32 @@ public final class MainActivity extends Activity {
         appendUpdatedAt(html, result);
         if (result.tasks.isEmpty()) html.append("<div class='card'>当前没有读取到待办。</div>");
         html.append("<select id='taskView' class='view-select' onchange='taskView(this.value)'>"
-                + "<option value='categorized'>分类显示</option><option value='all'>全部任务</option></select>");
+                + "<option value='time'>按时间</option><option value='platform'>按平台</option>"
+                + "<option value='all'>全部任务</option></select>");
+        html.append("<section class='task-view time-view'>");
         html.append("<details class='tree task-root' open><summary><h2>未完成</h2></summary>");
-        appendTaskGroup(html, "作业", result.tasks, "assignment", "pending");
-        appendTaskGroup(html, "测验与考试", result.tasks, "test", "pending");
+        appendTaskGroup(html, "作业", result.tasks, "assignment", "pending", null);
+        appendTaskGroup(html, "测验与考试", result.tasks, "test", "pending", null);
         html.append("</details><details class='tree task-root' open><summary><h2>已逾期</h2></summary>");
-        appendTaskGroup(html, "全部类型", result.tasks, "all", "overdue");
+        appendTaskGroup(html, "全部类型", result.tasks, "all", "overdue", null);
         html.append("</details><details class='tree task-root'><summary><h2>已完成</h2></summary>");
-        appendTaskGroup(html, "全部类型", result.tasks, "all", "completed");
-        html.append("</details>");
+        appendTaskGroup(html, "全部类型", result.tasks, "all", "completed", null);
+        html.append("</details></section><section class='task-view platform-view'>");
+        LinkedHashSet<String> platforms = new LinkedHashSet<>();
+        for (String preferred : new String[]{"MOOC", "延河课堂", "智园课堂", "平台未标注"}) {
+            for (RadarSync.Task task : result.tasks) if (preferred.equals(task.platform)) platforms.add(preferred);
+        }
+        for (RadarSync.Task task : result.tasks) platforms.add(task.platform);
+        for (String platform : platforms) {
+            html.append("<details class='tree task-root' open><summary><h2>")
+                    .append(escape(platform)).append("</h2></summary>");
+            appendTaskGroup(html, "未完成 · 作业", result.tasks, "assignment", "pending", platform);
+            appendTaskGroup(html, "未完成 · 测验与考试", result.tasks, "test", "pending", platform);
+            appendTaskGroup(html, "已逾期", result.tasks, "all", "overdue", platform);
+            appendTaskGroup(html, "已完成", result.tasks, "all", "completed", platform);
+            html.append("</details>");
+        }
+        html.append("</section>");
         if (!result.errors.isEmpty()) {
             html.append("<h2>同步告示</h2>");
             for (String error : result.errors) html.append("<div class='card error'>")
@@ -1657,21 +1691,22 @@ public final class MainActivity extends Activity {
         }
         html.append("<script>const rank={red:0,yellow:1,green:2,blue:3},ns='a:")
                 .append(escape(accountNamespace)).append(":';"
-                + "function sk(k){return ns+k}function taskView(v){document.body.classList.toggle('all-tasks',v==='all');document.querySelectorAll('.task-root,.task-category').forEach(e=>{if(v==='all')e.open=true});localStorage.setItem(sk('task-view'),v)}"
+                + "function sk(k){return ns+k}function taskView(v){document.body.classList.remove('view-time','view-platform','all-tasks');document.body.classList.add(v==='platform'?'view-platform':(v==='all'?'all-tasks':'view-time'));document.querySelectorAll('.task-root,.task-category').forEach(e=>{if(v==='all')e.open=true});localStorage.setItem(sk('task-view'),v)}"
                 + "function reorder(){document.querySelectorAll('.taskgroup').forEach(g=>[...g.querySelectorAll('[data-key]')].sort((a,b)=>rank[a.dataset.priority]-rank[b.dataset.priority]).forEach(e=>g.appendChild(e)))}"
                 + "document.querySelectorAll('[data-key]').forEach(e=>{let p=localStorage.getItem(sk('urgency:'+e.dataset.key))||'blue';e.dataset.priority=p;e.classList.add('p-'+p);let n=e.querySelector('textarea');n.value=localStorage.getItem(sk('note:'+e.dataset.key))||n.value;let s=localStorage.getItem(sk('state:'+e.dataset.key));if(s){e.querySelector('select').value=s;moveState(e,s)}});reorder();"
-                + "function urgency(ev,k,p){ev.preventDefault();ev.stopPropagation();let e=document.querySelector('[data-key=\"'+k+'\"]');e.classList.remove('p-red','p-yellow','p-green','p-blue');e.classList.add('p-'+p);e.dataset.priority=p;localStorage.setItem(sk('urgency:'+k),p);if(window.DDLNative)DDLNative.setPriority(k,p);reorder()}"
-                + "function note(k,v){localStorage.setItem(sk('note:'+k),v)}function moveState(e,v){let st=v==='已完成'?'completed':(e.dataset.overdue==='true'?'overdue':'pending'),sel='.taskgroup[data-state=\"'+st+'\"]'+(st==='pending'?'[data-kind=\"'+e.dataset.kind+'\"]':'');let g=document.querySelector(sel);if(g)g.appendChild(e)}function state(k,v){let e=document.querySelector('[data-key=\"'+k+'\"]');localStorage.setItem(sk('state:'+k),v);moveState(e,v);reorder()}let tv=localStorage.getItem(sk('task-view'))||'categorized';document.getElementById('taskView').value=tv;taskView(tv)</script>");
+                + "function urgency(ev,k,p){ev.preventDefault();ev.stopPropagation();document.querySelectorAll('[data-key=\"'+k+'\"]').forEach(e=>{e.classList.remove('p-red','p-yellow','p-green','p-blue');e.classList.add('p-'+p);e.dataset.priority=p});localStorage.setItem(sk('urgency:'+k),p);if(window.DDLNative)DDLNative.setPriority(k,p);reorder()}"
+                + "function note(k,v){localStorage.setItem(sk('note:'+k),v);document.querySelectorAll('[data-key=\"'+k+'\"] textarea').forEach(n=>{if(n.value!==v)n.value=v})}function moveState(e,v){let st=v==='已完成'?'completed':(e.dataset.overdue==='true'?'overdue':'pending'),root=e.closest('.platform-view'),sel='.taskgroup[data-state=\"'+st+'\"]'+(st==='pending'?'[data-kind=\"'+e.dataset.kind+'\"]':'')+(root?'[data-platform=\"'+e.dataset.platform+'\"]':'');let g=(root||document.querySelector('.time-view')).querySelector(sel);if(g)g.appendChild(e)}function state(k,v){localStorage.setItem(sk('state:'+k),v);document.querySelectorAll('[data-key=\"'+k+'\"]').forEach(e=>{e.querySelector('select').value=v;moveState(e,v)});reorder()}let tv=localStorage.getItem(sk('task-view'))||'time';if(!['time','platform','all'].includes(tv))tv='time';document.getElementById('taskView').value=tv;taskView(tv)</script>");
         return html.append("</body></html>").toString();
     }
 
     private static void appendTaskGroup(StringBuilder html, String title,
                                         java.util.List<RadarSync.Task> tasks,
-                                        String kind, String state) {
+                                        String kind, String state, String platformFilter) {
         String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
         boolean wroteTitle = false;
         StringBuilder cards = new StringBuilder();
         for (RadarSync.Task task : tasks) {
+            if (platformFilter != null && !platformFilter.equals(task.platform)) continue;
             boolean isOverdue = task.due.length() >= 10 && task.due.substring(0, 10).compareTo(today) < 0;
             boolean isAssignment = task.type.contains("作业");
             boolean typeMatches = "all".equals(kind) || ("assignment".equals(kind) == isAssignment);
@@ -1683,6 +1718,7 @@ public final class MainActivity extends Activity {
             String key = digest(task.course + "|" + task.title + "|" + task.due).substring(0, 12);
             cards.append("<details class='card' data-key='").append(key)
                     .append("' data-priority='blue' data-kind='").append(isAssignment ? "assignment" : "test")
+                    .append("' data-platform='").append(escape(task.platform))
                     .append("' data-overdue='").append(isOverdue).append("'><summary><span class='tag'>")
                     .append(escape(task.type)).append("</span> ").append(escape(task.title))
                     .append("<div class='meta'>").append(escape(task.course));
@@ -1700,8 +1736,10 @@ public final class MainActivity extends Activity {
         }
         html.append("<details class='tree task-category' open><summary><h3>").append(escape(title))
                 .append("</h3></summary><section class='taskgroup' data-state='")
-                .append(state).append("' data-kind='").append(kind).append("'>")
-                .append(cards);
+                .append(state).append("' data-kind='").append(kind).append("'");
+        if (platformFilter != null) html.append(" data-platform='")
+                .append(escape(platformFilter)).append("'");
+        html.append(">").append(cards);
         if (!wroteTitle) html.append("<div class='card meta'>暂无项目</div>");
         html.append("</section></details>");
     }
@@ -1712,40 +1750,31 @@ public final class MainActivity extends Activity {
         html.append("<input class='search' id='q' placeholder='搜索课程、学校或学期' oninput=\"filterCourses(this.value)\">");
         result.courses.sort((a, b) -> {
             int platformOrder = a.platform.compareTo(b.platform);
-            if (platformOrder != 0) return platformOrder;
-            int termOrder = b.term.compareTo(a.term);
-            return termOrder != 0 ? termOrder : a.name.compareTo(b.name);
+            return platformOrder != 0 ? platformOrder : a.name.compareTo(b.name);
         });
-        java.util.LinkedHashMap<String, java.util.LinkedHashMap<String,
-                java.util.List<RadarSync.Course>>> groups = new java.util.LinkedHashMap<>();
+        java.util.LinkedHashMap<String, java.util.List<RadarSync.Course>> groups =
+                new java.util.LinkedHashMap<>();
         for (RadarSync.Course course : result.courses) {
             String major = "MOOC".equals(course.platform) ? "MOOC" : "延河 / 智园课堂";
-            String group = TextUtils.isEmpty(course.term) ? "学期未标注" : course.term;
-            groups.computeIfAbsent(major, key -> new java.util.LinkedHashMap<>())
-                    .computeIfAbsent(group, key -> new java.util.ArrayList<>()).add(course);
+            groups.computeIfAbsent(major, key -> new java.util.ArrayList<>()).add(course);
         }
-        for (java.util.Map.Entry<String, java.util.LinkedHashMap<String,
-                java.util.List<RadarSync.Course>>> platform : groups.entrySet()) {
+        for (java.util.Map.Entry<String, java.util.List<RadarSync.Course>> platform
+                : groups.entrySet()) {
             html.append("<details class='tree' open><summary><h1 style='display:inline-block;font-size:22px;margin-top:28px'>")
                     .append(escape(platform.getKey())).append("</h1></summary>");
-            for (java.util.Map.Entry<String, java.util.List<RadarSync.Course>> term
-                    : platform.getValue().entrySet()) {
-                html.append("<details class='tree term-tree' open><summary><h2 style='display:inline-block'>")
-                        .append(escape(term.getKey())).append("</h2></summary>");
-                for (RadarSync.Course course : term.getValue()) {
-                    String searchable = (course.name + " " + course.school + " " + course.term)
-                            .toLowerCase(Locale.ROOT);
-                    html.append("<details class='card course tree course-tree' data-search='")
-                            .append(escape(searchable)).append("'><summary>").append(escape(course.name));
-                    if (!TextUtils.isEmpty(course.school)) html.append("<div class='meta'>")
-                            .append(escape(course.school)).append("</div>");
-                    html.append("</summary><div class='detail'>平台：").append(escape(course.platform))
-                            .append("<br>学期：").append(escape(course.term));
-                    if (!TextUtils.isEmpty(course.url)) html.append("<br><br><a href='")
-                            .append(escape(course.url)).append("'>打开课程详情</a>");
-                    html.append("</div></details>");
-                }
-                html.append("</details>");
+            for (RadarSync.Course course : platform.getValue()) {
+                String searchable = (course.name + " " + course.school + " " + course.term)
+                        .toLowerCase(Locale.ROOT);
+                html.append("<details class='card course tree course-tree' data-search='")
+                        .append(escape(searchable)).append("'><summary>").append(escape(course.name));
+                if (!TextUtils.isEmpty(course.school)) html.append("<div class='meta'>")
+                        .append(escape(course.school)).append("</div>");
+                html.append("</summary><div class='detail'>平台：").append(escape(course.platform));
+                if (!TextUtils.isEmpty(course.term)) html.append("<br>学期/时间：")
+                        .append(escape(course.term));
+                if (!TextUtils.isEmpty(course.url)) html.append("<br><br><a href='")
+                        .append(escape(course.url)).append("'>打开课程详情</a>");
+                html.append("</div></details>");
             }
             html.append("</details>");
         }

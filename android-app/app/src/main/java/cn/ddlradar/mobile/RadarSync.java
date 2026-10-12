@@ -142,7 +142,7 @@ final class RadarSync {
                     String type = raw.optString("type").toLowerCase(Locale.ROOT);
                     if (!(type.contains("homework") || type.contains("exam")
                             || type.contains("questionnaire") || type.contains("quiz"))) continue;
-                    result.tasks.add(new Task(raw.optString("course_name",
+                    result.tasks.add(new Task("智园课堂", raw.optString("course_name",
                                     raw.optString("course", "智园课堂")),
                             raw.optString("title", raw.optString("name", "未命名任务")),
                             typeName(type), localTime(firstText(
@@ -265,7 +265,7 @@ final class RadarSync {
             boolean completed = object.optInt("usedTryCount") > 0
                     || (object.has("userScore") && !object.isNull("userScore"));
             if (seen.add(identity)) {
-                output.add(new Task(course, ownName, inheritedType, localMillis(deadline),
+                output.add(new Task("MOOC", course, ownName, inheritedType, localMillis(deadline),
                         completed, firstText(object, "description", "content", "remark")));
             }
         }
@@ -340,9 +340,7 @@ final class RadarSync {
             }
         }
         String selectedTerm = expectedExists ? expectedTerm : newestTerm;
-        boolean networkFailed = false;
-        boolean forbidden = false;
-        int otherFailures = 0;
+        int reportedFailures = 0;
         outer:
         for (Course course : result.courses) {
             if (TextUtils.isEmpty(course.remoteId) || !course.term.equals(selectedTerm)) continue;
@@ -371,7 +369,7 @@ final class RadarSync {
                                     || raw.optInt("user_submit_count") > 0
                                     || (raw.has("final_score") && !raw.isNull("final_score"))
                                     || (raw.has("user_submission") && !raw.isNull("user_submission"));
-                            result.tasks.add(new Task(course.name,
+                            result.tasks.add(new Task("智园课堂", course.name,
                                     TextUtils.isEmpty(title) ? "未命名任务" : title,
                                     definition[2], due, completed,
                                     firstText(raw, "description", "content", "instruction", "remark")));
@@ -382,18 +380,21 @@ final class RadarSync {
                     String message = concise(error);
                     if (message.contains("Unable to resolve host")
                             || message.contains("No address associated")) {
-                        networkFailed = true;
+                        result.errors.add("智园「" + course.name + "」" + definition[2]
+                                + "：网络无法连接，后续课程未继续补查");
                         break outer;
                     }
-                    if (message.contains("HTTP 403")) forbidden = true;
-                    else otherFailures++;
+                    if (!message.contains("HTTP 403") && reportedFailures++ < 12) {
+                        result.errors.add("智园「" + course.name + "」" + definition[2]
+                                + "：" + message);
+                    }
                 }
             }
         }
-        if (networkFailed) result.errors.add("智园历史任务：网络暂时无法连接，已停止后续补查");
         // 403 is expected for courses that do not publish a particular activity type.
         // The global todo feed remains valid, so do not present this as an import failure.
-        if (otherFailures > 0) result.errors.add("智园历史任务：另有 " + otherFailures + " 个接口读取失败");
+        if (reportedFailures > 12) result.errors.add("智园历史任务：另有 "
+                + (reportedFailures - 12) + " 个具体项目读取失败");
     }
 
     static final class Result {
@@ -417,11 +418,12 @@ final class RadarSync {
     }
 
     static final class Task {
-        final String course, title, type, due, details;
+        final String platform, course, title, type, due, details;
         final boolean completed;
-        Task(String course, String title, String type, String due,
+        Task(String platform, String course, String title, String type, String due,
              boolean completed, String details) {
-            this.course = course; this.title = title; this.type = type; this.due = due;
+            this.platform = platform; this.course = course; this.title = title;
+            this.type = type; this.due = due;
             this.completed = completed; this.details = details;
         }
     }
