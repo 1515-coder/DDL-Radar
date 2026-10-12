@@ -6,7 +6,7 @@ DDL Radar 用于汇总本人有权访问的在线课程、作业、测验、考�
 
 ## 版本与平台
 
-| 功能 | Windows 桌面版 | Android 1.0.1 |
+| 功能 | Windows 桌面版 | Android 1.0.2 |
 | --- | --- | --- |
 | 中国大学 MOOC | 支持 | 支持 |
 | 延河课堂 | 支持 | 支持 |
@@ -19,7 +19,7 @@ DDL Radar 用于汇总本人有权访问的在线课程、作业、测验、考�
 | Excel、CSV、JSON 导出 | 支持 | — |
 
 - Windows 版：从源码运行或通过 PyInstaller 构建 `MOOC-DDL.exe`。
-- Android 版：详细说明见 [`android-app/README.md`](android-app/README.md)。发布包为 `android-app/releases/DDL-Radar-1.0.1.apk`。
+- Android 版：详细说明见 [`android-app/README.md`](android-app/README.md)。发布包为 `android-app/releases/DDL-Radar-1.0.2.apk`。
 
 ## 设计原则
 
