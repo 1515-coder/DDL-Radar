@@ -707,8 +707,9 @@ public final class MainActivity extends Activity {
         if (accounts.isEmpty()) {
             accounts.add("default");
             prefs.edit().putStringSet("account_names", accounts)
-                    .putString("account_password_" + accountId("default"),
-                            passwordProof("default", "default")).apply();
+                    // The replacement account has no preset password. Its first successful
+                    // sign-in initializes the password proof through switchAccount().
+                    .remove("account_password_" + accountId("default")).apply();
         }
         if (deletingActive) {
             activeAccount = accounts.iterator().next();
