@@ -126,6 +126,8 @@ public final class MainActivity extends Activity {
     private String activeUserAgent;
     private volatile String moocCsrfKey;
     private Future<?> syncFuture;
+    private volatile boolean cookieRestoreInProgress;
+    private volatile boolean authenticationSaveInProgress;
     private boolean deadlineWindowShown;
     private String currentSection = "tasks";
     private static final String DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -323,6 +325,10 @@ public final class MainActivity extends Activity {
     }
 
     private void openLogin(Platform platform) {
+        if (cookieRestoreInProgress || authenticationSaveInProgress) {
+            Toast.makeText(this, "正在处理登录状态，请稍候", Toast.LENGTH_SHORT).show();
+            return;
+        }
         // Cancel large images/scripts still loading from the previous platform first.
         webView.stopLoading();
         currentPlatform = platform;
@@ -562,6 +568,7 @@ public final class MainActivity extends Activity {
     private void loadProfile() {
         SharedPreferences prefs = getSharedPreferences(PROFILE_PREFS, MODE_PRIVATE);
         activeAccount = prefs.getString("active_account", "default");
+        migrateLegacyDefaultSessions(activeAccount);
         String name = prefs.getString("nickname_" + accountId(activeAccount), activeAccount);
         nameInput.setText(name);
         profileTitle.setText(name);
@@ -582,6 +589,10 @@ public final class MainActivity extends Activity {
     }
 
     private void switchAccount() {
+        if (cookieRestoreInProgress || authenticationSaveInProgress) {
+            Toast.makeText(this, "正在保存或切换登录状态，请稍候", Toast.LENGTH_SHORT).show();
+            return;
+        }
         String name = accountNameInput.getText().toString().trim();
         String password = accountPasswordInput.getText().toString();
         if (name.isEmpty() || password.isEmpty()) {
@@ -600,6 +611,7 @@ public final class MainActivity extends Activity {
                 .putString("active_account", name).apply();
         ensureAccountRegistered(name);
         activeAccount = name;
+        migrateLegacyDefaultSessions(name);
         if (syncFuture != null) syncFuture.cancel(true);
         accountPasswordInput.setText("");
         synchronized (accountResults) {
@@ -818,6 +830,7 @@ public final class MainActivity extends Activity {
     }
 
     private void restoreAccountCookies(String name) {
+        cookieRestoreInProgress = true;
         CookieManager manager = CookieManager.getInstance();
         manager.removeAllCookies(removed -> {
             int restored = 0;
@@ -843,6 +856,7 @@ public final class MainActivity extends Activity {
             manager.flush();
             int count = restored;
             runOnUiThread(() -> {
+                cookieRestoreInProgress = false;
                 updatePlatformLabels();
                 Toast.makeText(this, count == 0
                                 ? "已切换到 " + name + "，该账户尚未登录平台"
@@ -948,21 +962,27 @@ public final class MainActivity extends Activity {
         if (currentPlatform == null) {
             return;
         }
+        if (cookieRestoreInProgress || authenticationSaveInProgress) {
+            Toast.makeText(this, "正在处理登录状态，请稍候", Toast.LENGTH_SHORT).show();
+            return;
+        }
         Platform platform = currentPlatform;
+        String account = activeAccount;
+        authenticationSaveInProgress = true;
         confirmButton.setEnabled(false);
         authConfirmButton.setEnabled(false);
         statusText.setText(getString(R.string.validating_auth, platform.title));
         authStatusText.setText(getString(R.string.validating_auth, platform.title));
         CookieManager.getInstance().flush();
-        executor.execute(() -> validateAndSave(platform));
+        executor.execute(() -> validateAndSave(account, platform));
     }
 
-    private void validateAndSave(Platform platform) {
+    private void validateAndSave(String account, Platform platform) {
         try {
             Map<String, String> snapshots = cookiesFor(platform);
             String requestCookies = snapshots.get(platform.checkUrl);
             if (requestCookies == null || requestCookies.isBlank()) {
-                vault.remove(key(platform));
+                vault.remove(keyFor(account, platform));
                 throw new IllegalStateException("未找到登录 Cookie，请确认已经完成认证");
             }
             // MOOC currently uses several cross-domain cookie names. Requiring the old
@@ -970,7 +990,7 @@ public final class MainActivity extends Activity {
             if (platform != Platform.MOOC) {
                 Validation result = request(platform.checkUrl, requestCookies);
                 if (!result.ok) {
-                    vault.remove(key(platform));
+                    vault.remove(keyFor(account, platform));
                     throw new IllegalStateException("接口返回 " + result.status
                             + "，请确认已进入课程页面后重试");
                 }
@@ -982,8 +1002,10 @@ public final class MainActivity extends Activity {
             if (platform == Platform.MOOC && !TextUtils.isEmpty(moocCsrfKey)) {
                 payload.put("csrf_key", moocCsrfKey);
             }
-            vault.put(key(platform), payload.toString());
+            vault.put(keyFor(account, platform), payload.toString());
             runOnUiThread(() -> {
+                authenticationSaveInProgress = false;
+                if (!account.equals(activeAccount)) return;
                 confirmButton.setVisibility(View.GONE);
                 confirmButton.setEnabled(true);
                 authConfirmButton.setEnabled(true);
@@ -993,6 +1015,8 @@ public final class MainActivity extends Activity {
             });
         } catch (Exception error) {
             runOnUiThread(() -> {
+                authenticationSaveInProgress = false;
+                if (!account.equals(activeAccount)) return;
                 statusText.setText(getString(
                         R.string.auth_failed, platform.title, error.getMessage()));
                 confirmButton.setVisibility(View.VISIBLE);
@@ -1060,7 +1084,23 @@ public final class MainActivity extends Activity {
 
     private String keyFor(String account, Platform platform) {
         String base = "session_" + platform.name().toLowerCase(Locale.ROOT);
-        return "default".equals(account) ? base : base + "_" + accountId(account);
+        return base + "_" + accountId(account);
+    }
+
+    private void migrateLegacyDefaultSessions(String account) {
+        if (!"default".equals(account)) return;
+        for (Platform platform : Platform.values()) {
+            String legacyKey = "session_" + platform.name().toLowerCase(Locale.ROOT);
+            String isolatedKey = keyFor("default", platform);
+            if (!vault.contains(legacyKey) || vault.contains(isolatedKey)) continue;
+            try {
+                String value = vault.get(legacyKey);
+                if (value != null) vault.put(isolatedKey, value);
+                vault.remove(legacyKey);
+            } catch (Exception ignored) {
+                // Keep the legacy value intact when migration cannot be completed safely.
+            }
+        }
     }
 
     private void recordCandidateRequest(WebResourceRequest request) {
@@ -1129,6 +1169,10 @@ public final class MainActivity extends Activity {
     }
 
     private void syncData() {
+        if (cookieRestoreInProgress || authenticationSaveInProgress) {
+            Toast.makeText(this, "正在处理登录状态，请稍候", Toast.LENGTH_SHORT).show();
+            return;
+        }
         final String syncAccount = activeAccount;
         syncButton.setEnabled(false);
         syncProgress.setVisibility(View.VISIBLE);
