@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.idea/
+.test-tmp-*/
+*.iml
+
+# 登录态可能包含敏感 Cookie，只保存在本机。
+.data/
+artifacts/
+downloads/
+exports/
+build/
+dist/
+*.spec.bak
+
+# Android 本机构建环境与产物
+android-app/.gradle/
+android-app/local.properties
+android-app/app/build/
+android-app/build/
+android-app/releases/*.apk

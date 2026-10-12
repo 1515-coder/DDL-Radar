@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="中国大学 MOOC 作业与测验截止时间仪表盘">
+  <title>DDL Radar · MOOC 截止时间</title>
+  <link rel="icon" href="avatar.jpg" type="image/jpeg">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <img src="avatar.jpg" alt="">
+        </span>
+        <div><strong>DDL Radar</strong><span>MOOC · 延河课堂</span></div>
+      </div>
+      <div class="top-actions">
+        <button id="materialsButton" class="materials-button" type="button" hidden>课程资料</button>
+        <div class="export-menu">
+          <button id="exportButton" class="export-button" type="button">导出</button>
+          <div id="exportOptions" class="export-options" hidden>
+            <button class="export-option" data-format="xlsx" type="button">Excel</button>
+            <button class="export-option" data-format="csv" type="button">CSV</button>
+            <button class="export-option" data-format="json" type="button">JSON</button>
+          </div>
+        </div>
+        <button id="refreshButton" class="refresh-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M6.1 9A7 7 0 0 1 18 6l2 5M3.9 13 6 18a7 7 0 0 0 11.9-3"/></svg>
+          <span>刷新</span>
+        </button>
+        <button id="accountButton" class="account-button" type="button" title="切换账号"><img src="avatar.jpg" alt=""><span>账号</span></button>
+      </div>
+    </header>
+
+    <main>
+      <section class="overview" aria-labelledby="pageTitle">
+        <div>
+          <h1 id="pageTitle">课程与任务</h1>
+          <p id="updatedAt" class="updated-at">正在读取本地数据…</p>
+        </div>
+        <div class="stats" aria-label="任务统计">
+          <article><span id="pendingCount">—</span><p>待完成</p></article>
+          <article><span id="weekCount">—</span><p>7 天内到期</p></article>
+          <article><span id="courseCount">—</span><p>在学课程</p></article>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="course-panel">
+          <div class="section-heading"><h2>课程</h2><span id="activeCourseCount">0 门</span><button id="resetCourseSelection" type="button">恢复默认</button></div>
+          <div id="courseList" class="course-list"></div>
+        </aside>
+
+        <section class="tasks-panel" aria-labelledby="taskHeading">
+          <div class="task-toolbar">
+            <h2 id="taskHeading">近期任务</h2>
+            <div class="toolbar-groups">
+              <div class="filters" role="group" aria-label="显示方式">
+                <button class="view-button active" data-view="list" type="button">列表</button>
+                <button class="view-button" data-view="calendar" type="button">日历</button>
+                <button class="view-button" data-view="announcements" type="button">公告</button>
+                <button class="view-button" data-view="content" type="button">课程内容</button>
+              </div>
+              <div class="filters" role="group" aria-label="任务状态筛选">
+                <button class="filter active" data-filter="pending" type="button">待完成</button>
+                <button class="filter" data-filter="overdue" type="button">已逾期</button>
+                <button class="filter" data-filter="all" type="button">全部</button>
+                <button class="filter" data-filter="completed" type="button">已完成</button>
+              </div>
+            </div>
+          </div>
+          <div id="refreshStatus" class="refresh-status" hidden></div>
+          <div id="taskList" class="task-list" aria-live="polite"></div>
+          <div id="calendarView" class="calendar-view" hidden>
+            <div class="calendar-heading">
+              <button id="previousMonth" type="button" aria-label="上个月">‹</button>
+              <strong id="calendarTitle"></strong>
+              <button id="nextMonth" type="button" aria-label="下个月">›</button>
+            </div>
+            <div class="calendar-weekdays" aria-hidden="true"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+            <div id="calendarGrid" class="calendar-grid"></div>
+          </div>
+          <div id="announcementList" class="announcement-list" hidden></div>
+          <div id="courseContentList" class="course-content-list" hidden></div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <div id="accountGate" class="account-gate" role="dialog" aria-modal="true" aria-labelledby="accountTitle">
+    <div class="account-card">
+      <button id="closeAccountGate" class="account-close" type="button" aria-label="关闭账号选择">×</button>
+      <div class="account-icon" aria-hidden="true"><img src="avatar.jpg" alt=""></div>
+      <p class="eyebrow">账户</p>
+      <h2 id="accountTitle">选择账号</h2>
+      <p class="account-note">登录状态已加密保存在本机。</p>
+      <div id="securityUnlock" class="new-account" hidden>
+        <label for="masterPassword">软件加密密码</label>
+        <div><input id="masterPassword" type="password" autocomplete="current-password" placeholder="密码不会明文保存"><button id="unlockButton" type="button">解锁本地数据</button></div>
+        <fieldset class="remember-picker">
+          <legend>记住解锁状态</legend>
+          <label><input type="radio" name="rememberUnlock" value="none" checked>不记住</label>
+          <label><input type="radio" name="rememberUnlock" value="day">一天</label>
+          <label><input type="radio" name="rememberUnlock" value="week">一周</label>
+        </fieldset>
+      </div>
+      <div id="accountControls">
+      <div id="savedAccounts" class="saved-accounts"></div>
+      <div class="new-account">
+        <label for="accountName">添加账号</label>
+        <fieldset class="source-picker">
+          <legend>选择要采集的平台</legend>
+          <label class="source-option">
+            <input id="sourceMooc" type="checkbox" value="mooc" checked>
+            <span><strong>中国大学 MOOC</strong></span>
+          </label>
+          <label class="source-option">
+            <input id="sourceYanhe" type="checkbox" value="yanhe" checked>
+            <span><strong>延河课堂</strong></span>
+          </label>
+        </fieldset>
+        <div class="account-create-row"><input id="accountName" maxlength="40" placeholder="例如：我的账号"><button id="newAccountButton" type="button">登录新账号</button></div>
+      </div>
+      </div>
+      <div id="accountStatus" class="account-status" hidden></div>
+      <button id="confirmLoginButton" class="primary-button" type="button" hidden>我已完成认证</button>
+    </div>
+  </div>
+  <dialog id="failureNotice" class="failure-notice" aria-labelledby="failureTitle">
+    <div class="failure-symbol" aria-hidden="true">!</div>
+    <div>
+      <h2 id="failureTitle">本次数据提取失败</h2>
+      <p id="failureMessage" class="failure-message"></p>
+      <p class="failure-help">已保留上次数据，可稍后重试。</p>
+      <div class="failure-actions"><button id="closeFailureNotice" type="button">知道了</button></div>
+    </div>
+  </dialog>
+  <dialog id="materialsDialog" class="materials-dialog" aria-labelledby="materialsTitle">
+    <div class="materials-heading">
+      <div><p class="eyebrow">课程资料</p><h2 id="materialsTitle">选择下载内容</h2></div>
+      <button id="closeMaterialsDialog" class="dialog-close" type="button" aria-label="关闭">×</button>
+    </div>
+    <p id="materialsScanStatus" class="materials-scan-status">正在扫描…</p>
+    <div id="materialsControls" class="materials-controls" hidden>
+      <button id="selectAllMaterials" type="button">全选</button>
+      <button id="clearAllMaterials" type="button">清空</button>
+      <span id="materialSelectionCount">0 项</span>
+    </div>
+    <div id="materialsList" class="materials-list"></div>
+    <div class="materials-footer">
+      <button id="cancelMaterials" class="secondary-button" type="button">取消</button>
+      <button id="downloadSelectedMaterials" class="primary-button" type="button" disabled>下载选中项</button>
+    </div>
+  </dialog>
+  <dialog id="refreshDialog" class="refresh-dialog" aria-labelledby="refreshDialogTitle">
+    <div class="materials-heading">
+      <div><p class="eyebrow">采集范围</p><h2 id="refreshDialogTitle">刷新课程数据</h2></div>
+      <button id="closeRefreshDialog" class="dialog-close" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="refresh-dialog-body">
+      <section class="default-scope"><strong>默认采集</strong><span>作业 · 测验/考试 · 问卷</span></section>
+      <fieldset class="extra-scope">
+        <legend>可选内容</legend>
+        <label><input type="checkbox" value="bulletins">公告</label>
+        <label><input type="checkbox" value="activities">章节</label>
+        <label><input type="checkbox" value="classroom-list">课堂</label>
+        <label><input type="checkbox" value="topic-categories">讨论</label>
+        <label><input type="checkbox" value="interactions">互动</label>
+        <label><input type="checkbox" value="group-sets">分组学习</label>
+        <label><input type="checkbox" value="notes">笔记</label>
+        <label><input type="checkbox" value="correction-books">练习本</label>
+      </fieldset>
+    </div>
+    <div class="materials-footer">
+      <button id="cancelRefresh" class="secondary-button" type="button">取消</button>
+      <button id="startRefresh" class="primary-button" type="button">开始刷新</button>
+    </div>
+  </dialog>
+  <script src="app.js" defer></script>
+</body>
+</html>

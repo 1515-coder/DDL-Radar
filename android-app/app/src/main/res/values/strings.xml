@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DDL Radar</string>
+    <string name="subtitle">课程与截止日期</string>
+    <string name="mooc">MOOC 课程</string>
+    <string name="yanhe">延河课堂</string>
+    <string name="zhiyuan">智园课堂</string>
+    <string name="confirm_auth">我已完成认证</string>
+    <string name="back_dashboard">返回主页</string>
+    <string name="copy_diagnostics">复制请求诊断</string>
+    <string name="sync_data">同步课程与待办</string>
+    <string name="syncing_data">正在读取课程与待办…</string>
+    <string name="sync_success">同步完成：%1$d 门课程，%2$d 项待办</string>
+    <string name="sync_partial">同步完成：%1$d 门课程，%2$d 项待办，部分平台失败</string>
+    <string name="diagnostics_copied">已复制脱敏请求诊断，可以粘贴发送给开发者</string>
+    <string name="initial_status">请选择平台并在本页完成登录</string>
+    <string name="auth_instructions">请在页面中完成%1$s认证，完成后点击下方确认按钮</string>
+    <string name="opening_auth">正在打开%1$s认证页面…</string>
+    <string name="loading_auth">正在加载%1$s认证页面：%2$d%%</string>
+    <string name="validating_auth">正在验证%1$s认证状态…</string>
+    <string name="auth_success">%1$s认证成功，登录状态已加密保存</string>
+    <string name="auth_failed">%1$s认证未通过：%2$s</string>
+</resources>
