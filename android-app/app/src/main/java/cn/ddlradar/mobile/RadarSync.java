@@ -45,8 +45,11 @@ final class RadarSync {
                         "type=30&p=" + page + "&psize=100&courseType=1");
                 JSONArray courses = root.optJSONObject("result") == null ? null
                         : root.optJSONObject("result").optJSONArray("result");
-                if (courses != null) {
-                    for (int i = 0; i < courses.length(); i++) {
+                if (courses == null) {
+                    throw new IllegalStateException(
+                            "AUTH_REQUIRED 登录状态已失效或课程接口拒绝访问");
+                }
+                for (int i = 0; i < courses.length(); i++) {
                         JSONObject raw = courses.optJSONObject(i);
                         if (raw == null) continue;
                         JSONObject term = raw.optJSONObject("termPanel");
@@ -74,7 +77,6 @@ final class RadarSync {
                                 result.errors.add("MOOC「" + course.name + "」：" + concise(error));
                             }
                         }
-                    }
                 }
                 if (courses == null || courses.length() < 100) break;
                 }
@@ -209,7 +211,8 @@ final class RadarSync {
 
     private static boolean isAuthenticationFailure(Exception error) {
         String message = error.getMessage() == null ? "" : error.getMessage();
-        return message.contains("AUTH_REQUIRED") || message.contains("HTTP 401");
+        return message.contains("AUTH_REQUIRED") || message.contains("HTTP 401")
+                || message.contains("HTTP 403");
     }
 
     private static JSONArray firstArray(JSONObject root, String... keys) {

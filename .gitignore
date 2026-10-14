@@ -23,3 +23,4 @@ android-app/local.properties
 android-app/app/build/
 android-app/build/
 android-app/releases/*.apk
+keystore/

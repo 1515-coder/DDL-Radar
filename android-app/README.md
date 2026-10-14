@@ -1,4 +1,4 @@
-# DDL Radar Android 1.0.2
+# DDL Radar Android 1.0.3
 
 DDL Radar 是一个本地优先的 Android 课程与截止日期整理工具。它可以读取中国大学 MOOC、延河课堂和智园课堂中当前账号有权访问的课程、作业、测验及考试信息，并统一显示在待办、日历和课程页面中。
 
@@ -21,6 +21,7 @@ Android 版在开发过程中使用了 **OpenAI Codex** 辅助进行代码草拟
 - 日历日期和日程卡继承任务优先级；同一天优先显示最高等级颜色。
 - 课程按 MOOC、延河 / 智园课堂展示，学期和时间收纳在课程详情中。
 - 支持课程、学校和学期模糊搜索，并可打开课程详情。
+- 支持在课程详情中下载智园课堂允许下载的课件和附件，并由用户选择保存目录。
 - 支持多个本地账户，各账户的密码、平台登录状态、缓存和优先级彼此隔离。
 - 支持启动自动更新，不会自动切换当前页面。
 - 可选启动时弹窗提醒未来 48 小时内截止的未完成任务。
@@ -28,12 +29,12 @@ Android 版在开发过程中使用了 **OpenAI Codex** 辅助进行代码草拟
 
 ## 安装
 
-1. 下载 `releases/DDL-Radar-1.0.2.apk`。
+1. 从 GitHub Releases 下载 `DDL-Radar-1.0.3.apk`。
 2. 将 APK 发送到 Android 手机并打开。
 3. 如果系统阻止安装，请仅对当前文件管理器临时允许“安装未知应用”。
 4. 安装完成后可关闭该授权。
 
-当前 1.0.2 发布包使用开发机调试证书签名，适合直接安装和测试。上架应用商店前需要改用长期保管的正式签名证书。
+1.0.3 起使用项目独立的长期 Release 证书签名。由于 1.0.2 使用的是 Debug 证书，1.0.2 无法直接覆盖升级到 1.0.3；首次升级需要卸载旧版并重新登录平台。后续正式版本会继续使用同一证书，可正常覆盖升级。
 
 ## 首次使用
 
@@ -102,10 +103,14 @@ $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
 构建 Release：
 
 ```powershell
+$env:DDL_RADAR_KEYSTORE_FILE = "D:\path\to\ddl-radar-release.jks"
+$env:DDL_RADAR_KEYSTORE_PASSWORD = "<store password>"
+$env:DDL_RADAR_KEY_PASSWORD = "<key password>"
+$env:DDL_RADAR_KEY_ALIAS = "ddl-radar"
 .\gradlew.bat assembleRelease lintRelease --offline
 ```
 
-Release APK 位于 `app/build/outputs/apk/release/app-release.apk`。正式公开发布前，请将 `app/build.gradle` 中的调试签名替换为自己的正式签名配置并妥善备份密钥。
+Release APK 位于 `app/build/outputs/apk/release/app-release.apk`。签名信息只从环境变量读取，不应将密钥、密码或本机签名配置提交到 Git。必须妥善备份 Release 密钥；密钥丢失后将无法为现有安装继续发布可覆盖升级的版本。
 
 ## 使用范围
 

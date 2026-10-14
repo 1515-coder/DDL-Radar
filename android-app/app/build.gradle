@@ -6,17 +6,35 @@ android {
     namespace "cn.ddlradar.mobile"
     compileSdk 35
 
+    def releaseStoreFile = System.getenv("DDL_RADAR_KEYSTORE_FILE")
+    def releaseStorePassword = System.getenv("DDL_RADAR_KEYSTORE_PASSWORD")
+    def releaseKeyAlias = System.getenv("DDL_RADAR_KEY_ALIAS") ?: "ddl-radar"
+    def releaseKeyPassword = System.getenv("DDL_RADAR_KEY_PASSWORD") ?: releaseStorePassword
+
+    signingConfigs {
+        release {
+            if (releaseStoreFile && releaseStorePassword && releaseKeyPassword) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
     defaultConfig {
         applicationId "cn.ddlradar.mobile"
         minSdk 26
         targetSdk 35
-        versionCode 3
-        versionName "1.0.2"
+        versionCode 4
+        versionName "1.0.3"
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            if (releaseStoreFile && releaseStorePassword && releaseKeyPassword) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
@@ -25,5 +43,19 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    def requestsSignedRelease = graph.allTasks.any {
+        it.name in ["assembleRelease", "bundleRelease", "packageRelease"]
+    }
+    if (requestsSignedRelease && (!System.getenv("DDL_RADAR_KEYSTORE_FILE")
+            || !System.getenv("DDL_RADAR_KEYSTORE_PASSWORD")
+            || !System.getenv("DDL_RADAR_KEY_PASSWORD"))) {
+        throw new GradleException(
+                "Release signing is not configured. Set DDL_RADAR_KEYSTORE_FILE, "
+                        + "DDL_RADAR_KEYSTORE_PASSWORD and DDL_RADAR_KEY_PASSWORD."
+        )
     }
 }

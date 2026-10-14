@@ -11,12 +11,14 @@ import android.content.Context;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.DocumentsContract;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.MotionEvent;
 import android.view.VelocityTracker;
 import android.view.ViewConfiguration;
+import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
@@ -41,8 +43,11 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.ByteArrayInputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
+import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.LinkedHashMap;
@@ -65,6 +70,7 @@ import java.util.concurrent.Future;
 
 public final class MainActivity extends Activity {
     private static final int PICK_AVATAR = 41;
+    private static final int PICK_MATERIAL_FOLDER = 42;
     private static final String PROFILE_PREFS = "profile";
     private static final String HOME = "file:///android_asset/index.html";
     private static final String MOOC_CHECK = "https://www.icourse163.org/home.htm#/home/course";
@@ -132,6 +138,8 @@ public final class MainActivity extends Activity {
     private Future<?> syncFuture;
     private volatile boolean cookieRestoreInProgress;
     private volatile boolean authenticationSaveInProgress;
+    private String pendingMaterialCourseId;
+    private String pendingMaterialCourseName;
     private boolean deadlineWindowShown;
     private String currentSection = "tasks";
     private static final String DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -208,7 +216,7 @@ public final class MainActivity extends Activity {
                 view -> copyRequestDiagnostics());
         confirmButton.setOnClickListener(view -> confirmAuthentication());
         authConfirmButton.setOnClickListener(view -> confirmAuthentication());
-        findViewById(R.id.authBackButton).setOnClickListener(view -> showPlatformSettings());
+        findViewById(R.id.authBackButton).setOnClickListener(view -> leaveAuthentication());
         syncButton.setOnClickListener(view -> syncData());
         findViewById(R.id.tasksTab).setOnClickListener(view -> showTasks());
         findViewById(R.id.calendarTab).setOnClickListener(view -> showCalendar());
@@ -297,20 +305,9 @@ public final class MainActivity extends Activity {
                     return new WebResourceResponse(
                             "text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
                 }
-                if (currentPlatform != Platform.YANHE) {
-                    return null;
-                }
-                String accept = request.getRequestHeaders().get("Accept");
-                boolean heavyAsset = (accept != null && (
-                        accept.startsWith("image/")
-                                || accept.contains("font/")
-                                || accept.startsWith("video/")
-                                || accept.startsWith("audio/")))
-                        || url.matches(".*\\.(png|jpe?g|gif|webp|svg|woff2?|ttf|mp4|webm)(\\?.*)?$");
-                if (heavyAsset) {
-                    return new WebResourceResponse(
-                            "text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
-                }
+                // Do not strip Yanhe assets. Its login/workbench SPA may depend on fonts,
+                // SVG sprites or image requests during bootstrap; replacing them with an
+                // empty response can leave the authentication page completely blank.
                 return null;
             }
 
@@ -346,6 +343,10 @@ public final class MainActivity extends Activity {
         moocCourseMode = false;
         activeUserAgent = platform == Platform.MOOC ? DESKTOP_USER_AGENT : mobileUserAgent;
         webView.getSettings().setUserAgentString(activeUserAgent);
+        webView.getSettings().setCacheMode(platform == Platform.YANHE
+                ? WebSettings.LOAD_NO_CACHE : WebSettings.LOAD_DEFAULT);
+        webView.getSettings().setLoadsImagesAutomatically(true);
+        webView.getSettings().setBlockNetworkImage(false);
         webView.getSettings().setUseWideViewPort(platform == Platform.MOOC);
         webView.getSettings().setLoadWithOverviewMode(platform == Platform.MOOC);
         synchronized (requestTrace) {
@@ -359,6 +360,31 @@ public final class MainActivity extends Activity {
         authConfirmButton.setEnabled(true);
         webView.requestFocus(View.FOCUS_DOWN);
         webView.loadUrl(platform.loginUrl);
+    }
+
+    private void leaveAuthentication() {
+        webView.stopLoading();
+        webView.clearFocus();
+        webView.clearHistory();
+        InputMethodManager keyboard =
+                (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        keyboard.hideSoftInputFromWindow(webView.getWindowToken(), 0);
+        currentPlatform = null;
+        moocCourseMode = false;
+        authBar.setVisibility(View.GONE);
+        settingsPanel.setVisibility(View.GONE);
+        accountPanel.setVisibility(View.GONE);
+        drawerScrim.setVisibility(View.GONE);
+        confirmButton.setVisibility(View.GONE);
+        authConfirmButton.setVisibility(View.GONE);
+        topBar.setVisibility(View.VISIBLE);
+        bottomBar.setVisibility(View.VISIBLE);
+        webView.setVisibility(View.VISIBLE);
+        edgeHandle.setVisibility(View.VISIBLE);
+        activeUserAgent = mobileUserAgent;
+        webView.getSettings().setUserAgentString(activeUserAgent);
+        webView.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT);
+        refreshVisibleSection();
     }
 
     private void showHome() {
@@ -479,6 +505,32 @@ public final class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PICK_MATERIAL_FOLDER) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                Uri folder = data.getData();
+                int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                try {
+                    if ((flags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0
+                            && (flags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
+                        getContentResolver().takePersistableUriPermission(folder,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    } else if ((flags & Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0) {
+                        getContentResolver().takePersistableUriPermission(folder,
+                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    } else if ((flags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
+                        getContentResolver().takePersistableUriPermission(folder,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    }
+                } catch (SecurityException ignored) { }
+                downloadCourseMaterials(folder, pendingMaterialCourseId,
+                        pendingMaterialCourseName);
+            }
+            pendingMaterialCourseId = null;
+            pendingMaterialCourseName = null;
+            return;
+        }
         if (requestCode != PICK_AVATAR || resultCode != RESULT_OK
                 || data == null || data.getData() == null) return;
         Uri uri = data.getData();
@@ -1023,9 +1075,13 @@ public final class MainActivity extends Activity {
                 vault.remove(keyFor(account, platform));
                 throw new IllegalStateException("未找到登录 Cookie，请确认已经完成认证");
             }
-            // MOOC currently uses several cross-domain cookie names. Requiring the old
-            // STUDY_SESS/STUDY_INFO pair rejects valid newer desktop sessions.
-            if (platform != Platform.MOOC) {
+            if (platform == Platform.MOOC) {
+                if (TextUtils.isEmpty(moocCsrfKey)) {
+                    vault.remove(keyFor(account, platform));
+                    throw new IllegalStateException("未读取到 MOOC CSRF，请进入课程页后重试");
+                }
+                validateMoocSession(requestCookies, moocCsrfKey);
+            } else {
                 Validation result = request(platform.checkUrl, requestCookies);
                 if (!result.ok) {
                     vault.remove(keyFor(account, platform));
@@ -1116,6 +1172,46 @@ public final class MainActivity extends Activity {
                 || (contentType != null && contentType.toLowerCase(Locale.ROOT).contains("json"));
         return new Validation(status, status >= 200 && status < 300 && !looksLikeLogin
                 && (!apiRequest || jsonPayload));
+    }
+
+    private void validateMoocSession(String cookies, String csrf) throws Exception {
+        String address = "https://www.icourse163.org/web/j/"
+                + "learnerCourseRpcBean.getMyLearnedCoursePanelList.rpc?csrfKey="
+                + URLEncoder.encode(csrf, "UTF-8");
+        HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
+        connection.setConnectTimeout(15_000);
+        connection.setReadTimeout(20_000);
+        connection.setRequestMethod("POST");
+        connection.setRequestProperty("Accept", "application/json,text/plain,*/*");
+        connection.setRequestProperty("Cookie", cookies);
+        connection.setRequestProperty("User-Agent", DESKTOP_USER_AGENT);
+        connection.setRequestProperty("Referer", "https://www.icourse163.org/home.htm");
+        byte[] body = "type=30&p=1&psize=1&courseType=1".getBytes(StandardCharsets.UTF_8);
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        connection.setFixedLengthStreamingMode(body.length);
+        try (OutputStream output = connection.getOutputStream()) {
+            output.write(body);
+        }
+        int status = connection.getResponseCode();
+        InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+        String response = readAtMost(stream, 16_384);
+        connection.disconnect();
+        if (status == 401 || status == 403) {
+            throw new IllegalStateException("登录状态已失效（HTTP " + status + "）");
+        }
+        if (status < 200 || status >= 300) {
+            throw new IllegalStateException("MOOC 接口返回 HTTP " + status);
+        }
+        try {
+            JSONObject root = new JSONObject(response);
+            JSONObject result = root.optJSONObject("result");
+            if (result == null || result.optJSONArray("result") == null) {
+                throw new IllegalStateException("MOOC 登录状态已失效或课程接口拒绝访问");
+            }
+        } catch (org.json.JSONException error) {
+            throw new IllegalStateException("MOOC 登录状态已失效或接口未返回有效数据");
+        }
     }
 
     private static String readAtMost(InputStream stream, int limit) throws Exception {
@@ -1405,6 +1501,170 @@ public final class MainActivity extends Activity {
                     .putString("task_priority_" + accountId(activeAccount) + "_" + taskKey,
                             priority).apply();
         }
+
+        @JavascriptInterface
+        public void downloadMaterials(String courseId) {
+            if (courseId == null || !courseId.matches("[0-9]+")) return;
+            runOnUiThread(() -> chooseMaterialFolder(courseId));
+        }
+    }
+
+    private void chooseMaterialFolder(String courseId) {
+        RadarSync.Course selected = null;
+        if (lastResult != null) {
+            for (RadarSync.Course course : lastResult.courses) {
+                if (courseId.equals(course.remoteId)) {
+                    selected = course;
+                    break;
+                }
+            }
+        }
+        if (selected == null) {
+            Toast.makeText(this, "找不到该课程，请重新同步", Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (TextUtils.isEmpty(savedCookie(Platform.ZHIYUAN, "zy-eclass.bit.edu.cn"))) {
+            Toast.makeText(this, "请先完成智园课堂认证", Toast.LENGTH_LONG).show();
+            return;
+        }
+        pendingMaterialCourseId = courseId;
+        pendingMaterialCourseName = selected.name;
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(intent, PICK_MATERIAL_FOLDER);
+    }
+
+    private void downloadCourseMaterials(Uri folder, String courseId, String courseName) {
+        if (TextUtils.isEmpty(courseId)) return;
+        final String account = activeAccount;
+        statusText.setText("正在读取「" + courseName + "」的课程资料…");
+        executor.execute(() -> {
+            int downloaded = 0;
+            int failed = 0;
+            try {
+                String cookie = savedCookie(account, Platform.ZHIYUAN,
+                        "zy-eclass.bit.edu.cn");
+                if (TextUtils.isEmpty(cookie)) throw new IllegalStateException("智园登录状态不可用");
+                JSONArray materials = fetchMaterialCatalog(courseId, cookie);
+                for (int i = 0; i < materials.length(); i++) {
+                    JSONObject item = materials.optJSONObject(i);
+                    if (item == null) continue;
+                    try {
+                        downloadMaterialFile(folder, item.optString("reference_id"),
+                                item.optString("name"), cookie);
+                        downloaded++;
+                    } catch (Exception ignored) {
+                        failed++;
+                    }
+                }
+                final int ok = downloaded;
+                final int bad = failed;
+                runOnUiThread(() -> {
+                    if (!account.equals(activeAccount)) return;
+                    String message = ok == 0 && bad == 0 ? "该课程没有可下载的资料"
+                            : "资料下载完成：" + ok + " 个成功"
+                            + (bad > 0 ? "，" + bad + " 个失败" : "");
+                    statusText.setText(message);
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    if (!account.equals(activeAccount)) return;
+                    String message = "课程资料下载失败：" + error.getMessage();
+                    statusText.setText(message);
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+                });
+            }
+        });
+    }
+
+    private JSONArray fetchMaterialCatalog(String courseId, String cookie) throws Exception {
+        String conditions = URLEncoder.encode(
+                "{\"category\":null,\"itemsSortBy\":{\"predicate\":\"chapter\","
+                        + "\"reverse\":false},\"ignore_activity_types\":[\"lesson\"]}",
+                "UTF-8");
+        String address = "https://zy-eclass.bit.edu.cn/api/course/" + courseId
+                + "/coursewares?conditions=" + conditions + "&page=1&page_size=100";
+        JSONObject root = authenticatedJson(address, cookie);
+        JSONArray output = new JSONArray();
+        JSONArray activities = root.optJSONArray("activities");
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; activities != null && i < activities.length(); i++) {
+            JSONObject activity = activities.optJSONObject(i);
+            JSONArray uploads = activity == null ? null : activity.optJSONArray("uploads");
+            for (int j = 0; uploads != null && j < uploads.length(); j++) {
+                JSONObject upload = uploads.optJSONObject(j);
+                if (upload == null || upload.optBoolean("deleted")) continue;
+                String referenceId = upload.optString("reference_id");
+                boolean allowed = upload.optBoolean("allow_download")
+                        || upload.optBoolean("origin_allow_download");
+                if (!allowed || TextUtils.isEmpty(referenceId) || !seen.add(referenceId)
+                        || "elrc".equalsIgnoreCase(upload.optString("source"))) continue;
+                output.put(new JSONObject().put("reference_id", referenceId)
+                        .put("name", upload.optString("name", "课程资料-" + referenceId)));
+            }
+        }
+        return output;
+    }
+
+    private JSONObject authenticatedJson(String address, String cookie) throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
+        connection.setConnectTimeout(15_000);
+        connection.setReadTimeout(25_000);
+        connection.setRequestProperty("Accept", "application/json,text/plain,*/*");
+        connection.setRequestProperty("Cookie", cookie);
+        connection.setRequestProperty("User-Agent", DESKTOP_USER_AGENT);
+        int status = connection.getResponseCode();
+        String body = readAtMost(status >= 400 ? connection.getErrorStream()
+                : connection.getInputStream(), 2_000_000);
+        connection.disconnect();
+        if (status == 401 || status == 403) {
+            throw new IllegalStateException("智园登录状态已失效");
+        }
+        if (status < 200 || status >= 300) throw new IllegalStateException("HTTP " + status);
+        return new JSONObject(body);
+    }
+
+    private void downloadMaterialFile(Uri tree, String referenceId, String name,
+                                      String cookie) throws Exception {
+        if (TextUtils.isEmpty(referenceId)) throw new IllegalStateException("资料编号为空");
+        String safeName = safeFileName(name, "课程资料-" + referenceId);
+        String mime = URLConnection.guessContentTypeFromName(safeName);
+        if (mime == null) mime = "application/octet-stream";
+        Uri parent = DocumentsContract.buildDocumentUriUsingTree(tree,
+                DocumentsContract.getTreeDocumentId(tree));
+        Uri target = DocumentsContract.createDocument(getContentResolver(), parent, mime, safeName);
+        if (target == null) throw new IllegalStateException("无法创建文件");
+        HttpURLConnection connection = (HttpURLConnection) new URL(
+                "https://zy-eclass.bit.edu.cn/api/uploads/reference/" + referenceId + "/blob")
+                .openConnection();
+        connection.setConnectTimeout(15_000);
+        connection.setReadTimeout(60_000);
+        connection.setRequestProperty("Cookie", cookie);
+        connection.setRequestProperty("User-Agent", DESKTOP_USER_AGENT);
+        int status = connection.getResponseCode();
+        if (status < 200 || status >= 300) {
+            connection.disconnect();
+            throw new IllegalStateException("HTTP " + status);
+        }
+        try (InputStream input = connection.getInputStream();
+             OutputStream output = getContentResolver().openOutputStream(target, "w")) {
+            if (output == null) throw new IllegalStateException("无法写入文件");
+            byte[] buffer = new byte[16 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private static String safeFileName(String value, String fallback) {
+        String cleaned = (value == null ? "" : value)
+                .replaceAll("[<>:\"/\\\\|?*\\x00-\\x1f]", "_").trim();
+        if (cleaned.isEmpty()) cleaned = fallback;
+        return cleaned.length() > 120 ? cleaned.substring(0, 120) : cleaned;
     }
 
     private String savedCookie(Platform platform, String hostPart) {
@@ -1444,16 +1704,37 @@ public final class MainActivity extends Activity {
                 String cookie = savedCookie(account, platform, host);
                 if (TextUtils.isEmpty(cookie)) continue;
                 try {
-                    Validation validation = request(platform.checkUrl, cookie);
-                    if (!validation.ok) {
+                    boolean valid;
+                    if (platform == Platform.MOOC) {
+                        String saved = vault.get(keyFor(account, platform));
+                        String csrf = saved == null ? "" : new JSONObject(saved).optString("csrf_key");
+                        if (TextUtils.isEmpty(csrf)) {
+                            valid = false;
+                        } else {
+                            validateMoocSession(cookie, csrf);
+                            valid = true;
+                        }
+                    } else {
+                        valid = request(platform.checkUrl, cookie).ok;
+                    }
+                    if (!valid) {
                         vault.remove(keyFor(account, platform));
                         unverifiedSessions.remove(keyFor(account, platform));
                         changed = true;
                     } else if (unverifiedSessions.remove(keyFor(account, platform))) {
                         changed = true;
                     }
-                } catch (Exception ignored) {
-                    // Offline startup must retain the last known authentication state.
+                } catch (Exception error) {
+                    String message = error.getMessage() == null ? "" : error.getMessage();
+                    if (message.contains("登录状态已失效")
+                            || message.contains("拒绝访问")
+                            || message.contains("HTTP 401")
+                            || message.contains("HTTP 403")) {
+                        vault.remove(keyFor(account, platform));
+                        unverifiedSessions.remove(keyFor(account, platform));
+                        changed = true;
+                    }
+                    // Network failures retain the snapshot but keep it unverified.
                 }
             }
             boolean stateChanged = changed;
@@ -1645,6 +1926,7 @@ public final class MainActivity extends Activity {
                 + ".p-red{border-left:6px solid #ef5350}.p-yellow{border-left:6px solid #f5b942}.p-green{border-left:6px solid #35bd8b}.p-blue{border-left:6px solid #4e70f5}"
                 + ".search{width:100%;border:1px solid #e2e7ed;border-radius:10px;background:#fff;padding:13px 14px;font-size:15px;margin-bottom:12px;outline:none}"
                 + ".view-select{width:100%;border:1px solid #e2e7ed;border-radius:10px;background:#fff;padding:12px 14px;font-size:14px;color:#374151;margin:-7px 0 18px}"
+                + ".download-materials{border:0;border-radius:9px;background:#315efb;color:#fff;padding:10px 14px;font:600 14px system-ui;box-shadow:0 1px 2px #17203618}"
                 + ".task-root{margin:12px 0 21px}.task-root>summary{background:#eaf0ff;border:1px solid #dbe4ff;border-radius:11px;padding:12px 14px 12px 40px}.task-root>summary:before{left:14px}.task-root>summary h2{margin:0;display:inline-block}"
                 + ".task-category{margin:9px 0 9px 12px;border-left:2px solid #dce3ee;padding-left:10px}.task-category>summary{padding:8px 8px 8px 32px}.task-category>summary:before{left:8px;font-size:21px}.task-category>summary h3{font-size:15px;margin:0;display:inline-block}"
                 + ".task-view{display:none}body.view-time .time-view,body.view-platform .platform-view,body.all-tasks .time-view{display:block}"
@@ -1774,6 +2056,13 @@ public final class MainActivity extends Activity {
                         .append(escape(course.term));
                 if (!TextUtils.isEmpty(course.url)) html.append("<br><br><a href='")
                         .append(escape(course.url)).append("'>打开课程详情</a>");
+                if (!TextUtils.isEmpty(course.remoteId)
+                        && course.remoteId.matches("[0-9]+")) {
+                    html.append("<br><br><button class='download-materials' type='button' "
+                            + "onclick=\"DDLNative.downloadMaterials('")
+                            .append(course.remoteId)
+                            .append("')\">下载课程资料</button>");
+                }
                 html.append("</div></details>");
             }
             html.append("</details>");
@@ -1859,6 +2148,8 @@ public final class MainActivity extends Activity {
             leavePlatformSettings();
         } else if (accountPanel.getVisibility() == View.VISIBLE) {
             closeDrawer();
+        } else if (currentPlatform != null || authBar.getVisibility() == View.VISIBLE) {
+            leaveAuthentication();
         } else if (webView.canGoBack()) {
             webView.goBack();
         } else {
