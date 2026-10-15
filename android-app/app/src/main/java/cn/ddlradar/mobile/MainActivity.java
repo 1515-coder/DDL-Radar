@@ -8,10 +8,14 @@ import android.content.SharedPreferences;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.ContentValues;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Build;
+import android.os.Environment;
 import android.provider.DocumentsContract;
+import android.provider.MediaStore;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.WindowInsets;
@@ -22,6 +26,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -48,6 +53,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.net.URLConnection;
+import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.LinkedHashMap;
@@ -57,6 +63,8 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.ArrayList;
+import java.util.List;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -140,6 +148,9 @@ public final class MainActivity extends Activity {
     private volatile boolean authenticationSaveInProgress;
     private String pendingMaterialCourseId;
     private String pendingMaterialCourseName;
+    private JSONArray pendingMaterialItems;
+    private final Map<String, JSONObject> materialCatalog = new LinkedHashMap<>();
+    private volatile boolean materialCenterMode;
     private boolean deadlineWindowShown;
     private String currentSection = "tasks";
     private static final String DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -235,6 +246,7 @@ public final class MainActivity extends Activity {
         findViewById(R.id.clearYanheButton).setOnClickListener(view -> confirmClearPlatform(Platform.YANHE));
         findViewById(R.id.clearZhiyuanButton).setOnClickListener(view -> confirmClearPlatform(Platform.ZHIYUAN));
         findViewById(R.id.accountManageButton).setOnClickListener(view -> showAccountManager());
+        findViewById(R.id.materialDownloadButton).setOnClickListener(view -> showMaterialCenter());
         findViewById(R.id.accountManageBackButton).setOnClickListener(view -> leaveAccountManager());
         findViewById(R.id.profileManageButton).setOnClickListener(view -> showProfile());
         findViewById(R.id.profileBackButton).setOnClickListener(view -> leaveProfile());
@@ -294,6 +306,16 @@ public final class MainActivity extends Activity {
             }
 
             @Override
+            public void onReceivedError(WebView view, WebResourceRequest request,
+                                        WebResourceError error) {
+                super.onReceivedError(view, request, error);
+                if (request.isForMainFrame()
+                        && error.getErrorCode() == WebViewClient.ERROR_HOST_LOOKUP) {
+                    verifyFailedDomain(request.getUrl());
+                }
+            }
+
+            @Override
             public WebResourceResponse shouldInterceptRequest(
                     WebView view, WebResourceRequest request) {
                 recordCandidateRequest(request);
@@ -322,6 +344,35 @@ public final class MainActivity extends Activity {
                     authConfirmButton.setVisibility(View.VISIBLE);
                 }
             }
+        });
+    }
+
+    private void verifyFailedDomain(Uri failedUri) {
+        String host = failedUri == null ? null : failedUri.getHost();
+        if (TextUtils.isEmpty(host)) return;
+        executor.execute(() -> {
+            boolean resolved = false;
+            for (int attempt = 1; attempt <= 2 && !resolved; attempt++) {
+                try {
+                    Thread.sleep(attempt * 600L);
+                    InetAddress.getByName(host);
+                    resolved = true;
+                } catch (Exception ignored) { }
+            }
+            final boolean domainResolved = resolved;
+            runOnUiThread(() -> {
+                if (domainResolved) {
+                    statusText.setText("域名已恢复，正在重新加载…");
+                    webView.loadUrl(failedUri.toString());
+                } else {
+                    webView.stopLoading();
+                    webView.clearCache(true);
+                    statusText.setText("域名连续三次无法解析，已清理网页缓存；账户和课程数据未删除");
+                    Toast.makeText(this,
+                            "网页资源缓存已清理，请稍后重新进入；登录与课程数据仍保留",
+                            Toast.LENGTH_LONG).show();
+                }
+            });
         });
     }
 
@@ -409,6 +460,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showPlatformSettings() {
+        materialCenterMode = false;
         currentPlatform = null;
         webView.stopLoading();
         closeDrawer();
@@ -436,6 +488,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showAccountManager() {
+        materialCenterMode = false;
         closeDrawer();
         accountManagePanel.setVisibility(View.VISIBLE);
         settingsPanel.setVisibility(View.GONE);
@@ -456,6 +509,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showProfile() {
+        materialCenterMode = false;
         closeDrawer();
         profilePanel.setVisibility(View.VISIBLE);
         settingsPanel.setVisibility(View.GONE);
@@ -524,11 +578,17 @@ public final class MainActivity extends Activity {
                                 Intent.FLAG_GRANT_READ_URI_PERMISSION);
                     }
                 } catch (SecurityException ignored) { }
-                downloadCourseMaterials(folder, pendingMaterialCourseId,
-                        pendingMaterialCourseName);
+                if (pendingMaterialItems != null) {
+                    downloadMaterialItems(folder, pendingMaterialItems,
+                            pendingMaterialCourseName);
+                } else {
+                    downloadCourseMaterials(folder, pendingMaterialCourseId,
+                            pendingMaterialCourseName);
+                }
             }
             pendingMaterialCourseId = null;
             pendingMaterialCourseName = null;
+            pendingMaterialItems = null;
             return;
         }
         if (requestCode != PICK_AVATAR || resultCode != RESULT_OK
@@ -693,7 +753,7 @@ public final class MainActivity extends Activity {
     private void confirmClearPlatform(Platform platform) {
         new AlertDialog.Builder(this).setTitle("清除" + platform.title + "认证？")
                 .setMessage("只清除当前账户在该平台的登录状态，不删除已缓存的课程和任务。")
-                .setNegativeButton("取消", null)
+                .setNegativeButton("取消", (dialog, which) -> clearPendingMaterialDownload())
                 .setPositiveButton("清除", (dialog, which) -> clearPlatformAuthentication(platform))
                 .show();
     }
@@ -1507,6 +1567,121 @@ public final class MainActivity extends Activity {
             if (courseId == null || !courseId.matches("[0-9]+")) return;
             runOnUiThread(() -> chooseMaterialFolder(courseId));
         }
+
+        @JavascriptInterface
+        public void downloadSelectedMaterials(String referencesJson) {
+            if (!materialCenterMode) return;
+            try {
+                JSONArray requested = new JSONArray(referencesJson == null ? "[]" : referencesJson);
+                JSONArray selected = new JSONArray();
+                synchronized (materialCatalog) {
+                    for (int i = 0; i < requested.length(); i++) {
+                        JSONObject item = materialCatalog.get(requested.optString(i));
+                        if (item != null) selected.put(new JSONObject(item.toString()));
+                    }
+                }
+                if (selected.length() == 0) {
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                            "请先勾选需要下载的资料", Toast.LENGTH_SHORT).show());
+                    return;
+                }
+                runOnUiThread(() -> chooseMaterialFolder(selected,
+                        "已选 " + selected.length() + " 项资料"));
+            } catch (Exception ignored) { }
+        }
+
+        @JavascriptInterface
+        public void closeMaterials() {
+            runOnUiThread(() -> leaveMaterialCenter());
+        }
+    }
+
+    private void showMaterialCenter() {
+        closeDrawer();
+        materialCenterMode = true;
+        currentPlatform = null;
+        settingsPanel.setVisibility(View.GONE);
+        accountManagePanel.setVisibility(View.GONE);
+        profilePanel.setVisibility(View.GONE);
+        authBar.setVisibility(View.GONE);
+        bottomBar.setVisibility(View.GONE);
+        webView.setVisibility(View.VISIBLE);
+        webView.loadDataWithBaseURL("https://ddlradar.local/",
+                pageStart("课程资料下载")
+                        + "<button class='back' onclick='DDLNative.closeMaterials()'>‹ 返回主页面</button>"
+                        + "<div class='card'>正在读取课程资料…</div></body></html>",
+                "text/html", "UTF-8", null);
+        loadMaterialCatalog();
+    }
+
+    private void leaveMaterialCenter() {
+        materialCenterMode = false;
+        synchronized (materialCatalog) {
+            materialCatalog.clear();
+        }
+        bottomBar.setVisibility(View.VISIBLE);
+        refreshVisibleSection();
+    }
+
+    private void loadMaterialCatalog() {
+        final String account = activeAccount;
+        executor.execute(() -> {
+            JSONArray all = new JSONArray();
+            List<String> errors = new ArrayList<>();
+            try {
+                String cookie = savedCookie(account, Platform.ZHIYUAN,
+                        "zy-eclass.bit.edu.cn");
+                if (TextUtils.isEmpty(cookie)) {
+                    throw new IllegalStateException("请先完成智园课堂认证并同步课程");
+                }
+                if (lastResult == null) throw new IllegalStateException("请先同步课程");
+                for (RadarSync.Course course : lastResult.courses) {
+                    if (TextUtils.isEmpty(course.remoteId)
+                            || !course.remoteId.matches("[0-9]+")) continue;
+                    try {
+                        JSONArray items = fetchMaterialCatalog(course.remoteId, cookie);
+                        for (int i = 0; i < items.length(); i++) {
+                            JSONObject item = items.optJSONObject(i);
+                            if (item == null) continue;
+                            item.put("course", course.name);
+                            item.put("course_id", course.remoteId);
+                            all.put(item);
+                        }
+                    } catch (Exception error) {
+                        errors.add(course.name + "：" + error.getMessage());
+                    }
+                }
+                synchronized (materialCatalog) {
+                    materialCatalog.clear();
+                    for (int i = 0; i < all.length(); i++) {
+                        JSONObject item = all.optJSONObject(i);
+                        if (item != null) materialCatalog.put(
+                                item.optString("reference_id"), item);
+                    }
+                }
+                runOnUiThread(() -> {
+                    if (!account.equals(activeAccount) || !materialCenterMode) return;
+                    webView.loadDataWithBaseURL("https://ddlradar.local/",
+                            renderMaterialCenter(all, errors), "text/html", "UTF-8", null);
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    if (!account.equals(activeAccount) || !materialCenterMode) return;
+                    webView.loadDataWithBaseURL("https://ddlradar.local/",
+                            pageStart("课程资料下载")
+                                    + "<button class='back' onclick='DDLNative.closeMaterials()'>‹ 返回主页面</button>"
+                                    + "<div class='card error'>" + escape(error.getMessage())
+                                    + "</div></body></html>", "text/html", "UTF-8", null);
+                });
+            }
+        });
+    }
+
+    private void chooseMaterialFolder(JSONArray items, String label) {
+        pendingMaterialItems = items;
+        pendingMaterialCourseId = null;
+        pendingMaterialCourseName = label;
+        askMaterialDestination();
     }
 
     private void chooseMaterialFolder(String courseId) {
@@ -1529,6 +1704,46 @@ public final class MainActivity extends Activity {
         }
         pendingMaterialCourseId = courseId;
         pendingMaterialCourseName = selected.name;
+        pendingMaterialItems = null;
+        askMaterialDestination();
+    }
+
+    private void askMaterialDestination() {
+        new AlertDialog.Builder(this)
+                .setTitle("保存课程资料")
+                .setMessage("默认保存到系统 Downloads/DDL Radar 文件夹，也可以选择其他位置。")
+                .setNegativeButton("取消", null)
+                .setNeutralButton("选择文件夹", (dialog, which) -> launchMaterialFolderPicker())
+                .setPositiveButton("保存到 Downloads", (dialog, which) -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        if (pendingMaterialItems != null) {
+                            JSONArray selected = pendingMaterialItems;
+                            String label = pendingMaterialCourseName;
+                            pendingMaterialItems = null;
+                            pendingMaterialCourseName = null;
+                            downloadMaterialItems(null, selected, label);
+                        } else {
+                            String courseId = pendingMaterialCourseId;
+                            String courseName = pendingMaterialCourseName;
+                            pendingMaterialCourseId = null;
+                            pendingMaterialCourseName = null;
+                            downloadCourseMaterials(null, courseId, courseName);
+                        }
+                    } else {
+                        Toast.makeText(this, "当前 Android 版本需要手动选择文件夹",
+                                Toast.LENGTH_LONG).show();
+                        launchMaterialFolderPicker();
+                    }
+                }).show();
+    }
+
+    private void clearPendingMaterialDownload() {
+        pendingMaterialItems = null;
+        pendingMaterialCourseId = null;
+        pendingMaterialCourseName = null;
+    }
+
+    private void launchMaterialFolderPicker() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
                 | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -1548,6 +1763,7 @@ public final class MainActivity extends Activity {
                         "zy-eclass.bit.edu.cn");
                 if (TextUtils.isEmpty(cookie)) throw new IllegalStateException("智园登录状态不可用");
                 JSONArray materials = fetchMaterialCatalog(courseId, cookie);
+                updateMaterialProgress(0, materials.length(), "准备下载");
                 for (int i = 0; i < materials.length(); i++) {
                     JSONObject item = materials.optJSONObject(i);
                     if (item == null) continue;
@@ -1558,6 +1774,7 @@ public final class MainActivity extends Activity {
                     } catch (Exception ignored) {
                         failed++;
                     }
+                    updateMaterialProgress(i + 1, materials.length(), item.optString("name"));
                 }
                 final int ok = downloaded;
                 final int bad = failed;
@@ -1577,6 +1794,46 @@ public final class MainActivity extends Activity {
                     Toast.makeText(this, message, Toast.LENGTH_LONG).show();
                 });
             }
+        });
+    }
+
+    private void downloadMaterialItems(Uri folder, JSONArray materials, String label) {
+        final String account = activeAccount;
+        statusText.setText("正在下载" + label + "…");
+        executor.execute(() -> {
+            int downloaded = 0;
+            int failed = 0;
+            String cookie = savedCookie(account, Platform.ZHIYUAN,
+                    "zy-eclass.bit.edu.cn");
+            if (TextUtils.isEmpty(cookie)) {
+                runOnUiThread(() -> Toast.makeText(this,
+                        "智园登录状态不可用，请重新认证", Toast.LENGTH_LONG).show());
+                return;
+            }
+            updateMaterialProgress(0, materials.length(), "准备下载");
+            for (int i = 0; i < materials.length(); i++) {
+                JSONObject item = materials.optJSONObject(i);
+                if (item == null) continue;
+                try {
+                    String course = safeFileName(item.optString("course"), "课程");
+                    String fileName = course + " - " + item.optString("name");
+                    downloadMaterialFile(folder, item.optString("reference_id"),
+                            fileName, cookie);
+                    downloaded++;
+                } catch (Exception ignored) {
+                    failed++;
+                }
+                updateMaterialProgress(i + 1, materials.length(), item.optString("name"));
+            }
+            final int ok = downloaded;
+            final int bad = failed;
+            runOnUiThread(() -> {
+                if (!account.equals(activeAccount)) return;
+                String message = "批量下载完成：" + ok + " 个成功"
+                        + (bad > 0 ? "，" + bad + " 个失败" : "");
+                statusText.setText(message);
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+            });
         });
     }
 
@@ -1602,8 +1859,13 @@ public final class MainActivity extends Activity {
                         || upload.optBoolean("origin_allow_download");
                 if (!allowed || TextUtils.isEmpty(referenceId) || !seen.add(referenceId)
                         || "elrc".equalsIgnoreCase(upload.optString("source"))) continue;
+                String materialDate = firstNonEmpty(upload.optString("created_at"),
+                        upload.optString("updated_at"),
+                        activity.optString("created_at"), activity.optString("start_time"));
+                if (materialDate.length() > 10) materialDate = materialDate.substring(0, 10);
                 output.put(new JSONObject().put("reference_id", referenceId)
-                        .put("name", upload.optString("name", "课程资料-" + referenceId)));
+                        .put("name", upload.optString("name", "课程资料-" + referenceId))
+                        .put("date", materialDate));
             }
         }
         return output;
@@ -1633,9 +1895,24 @@ public final class MainActivity extends Activity {
         String safeName = safeFileName(name, "课程资料-" + referenceId);
         String mime = URLConnection.guessContentTypeFromName(safeName);
         if (mime == null) mime = "application/octet-stream";
-        Uri parent = DocumentsContract.buildDocumentUriUsingTree(tree,
-                DocumentsContract.getTreeDocumentId(tree));
-        Uri target = DocumentsContract.createDocument(getContentResolver(), parent, mime, safeName);
+        Uri target;
+        boolean mediaStoreTarget = tree == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q;
+        if (mediaStoreTarget) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, safeName);
+            values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH,
+                    Environment.DIRECTORY_DOWNLOADS + "/DDL Radar");
+            values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+            target = getContentResolver().insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+        } else {
+            if (tree == null) throw new IllegalStateException("未选择保存目录");
+            Uri parent = DocumentsContract.buildDocumentUriUsingTree(tree,
+                    DocumentsContract.getTreeDocumentId(tree));
+            target = DocumentsContract.createDocument(
+                    getContentResolver(), parent, mime, safeName);
+        }
         if (target == null) throw new IllegalStateException("无法创建文件");
         HttpURLConnection connection = (HttpURLConnection) new URL(
                 "https://zy-eclass.bit.edu.cn/api/uploads/reference/" + referenceId + "/blob")
@@ -1647,17 +1924,41 @@ public final class MainActivity extends Activity {
         int status = connection.getResponseCode();
         if (status < 200 || status >= 300) {
             connection.disconnect();
+            getContentResolver().delete(target, null, null);
             throw new IllegalStateException("HTTP " + status);
         }
+        boolean complete = false;
         try (InputStream input = connection.getInputStream();
              OutputStream output = getContentResolver().openOutputStream(target, "w")) {
             if (output == null) throw new IllegalStateException("无法写入文件");
             byte[] buffer = new byte[16 * 1024];
             int count;
             while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            complete = true;
         } finally {
             connection.disconnect();
+            if (!complete) {
+                getContentResolver().delete(target, null, null);
+            } else if (mediaStoreTarget) {
+                ContentValues ready = new ContentValues();
+                ready.put(MediaStore.MediaColumns.IS_PENDING, 0);
+                getContentResolver().update(target, ready, null, null);
+            }
         }
+    }
+
+    private void updateMaterialProgress(int completed, int total, String currentName) {
+        int percent = total <= 0 ? 0 : Math.min(100, completed * 100 / total);
+        runOnUiThread(() -> {
+            if (materialCenterMode) {
+                String script = "window.updateDownloadProgress&&updateDownloadProgress("
+                        + percent + "," + completed + "," + total + ","
+                        + JSONObject.quote(currentName == null ? "" : currentName) + ")";
+                webView.evaluateJavascript(script, null);
+            }
+            statusText.setText(total <= 0 ? "正在准备课程资料…"
+                    : "正在下载课程资料 " + completed + "/" + total);
+        });
     }
 
     private static String safeFileName(String value, String fallback) {
@@ -1665,6 +1966,11 @@ public final class MainActivity extends Activity {
                 .replaceAll("[<>:\"/\\\\|?*\\x00-\\x1f]", "_").trim();
         if (cleaned.isEmpty()) cleaned = fallback;
         return cleaned.length() > 120 ? cleaned.substring(0, 120) : cleaned;
+    }
+
+    private static String firstNonEmpty(String... values) {
+        for (String value : values) if (!TextUtils.isEmpty(value)) return value;
+        return "";
     }
 
     private String savedCookie(Platform platform, String hostPart) {
@@ -1927,6 +2233,8 @@ public final class MainActivity extends Activity {
                 + ".search{width:100%;border:1px solid #e2e7ed;border-radius:10px;background:#fff;padding:13px 14px;font-size:15px;margin-bottom:12px;outline:none}"
                 + ".view-select{width:100%;border:1px solid #e2e7ed;border-radius:10px;background:#fff;padding:12px 14px;font-size:14px;color:#374151;margin:-7px 0 18px}"
                 + ".download-materials{border:0;border-radius:9px;background:#315efb;color:#fff;padding:10px 14px;font:600 14px system-ui;box-shadow:0 1px 2px #17203618}"
+                + ".back{border:0;background:transparent;color:#315efb;padding:0 0 14px;font:600 15px system-ui}.actions{position:sticky;bottom:0;background:#f4f6f8;padding:12px 0}.primary{width:100%;border:0;border-radius:10px;background:#315efb;color:#fff;padding:13px;font:600 15px system-ui}.material-row{display:flex;gap:11px;align-items:flex-start;padding:11px 2px;border-top:1px solid #edf0f3}.material-row:first-child{border-top:0}.material-row input{margin-top:4px}.material-name{font-weight:600}.material-view{display:none}body.by-course .by-course,body.by-time .by-time{display:block}.group-all{margin-right:8px}"
+                + ".progress-track{height:7px;background:#e4e9f0;border-radius:99px;overflow:hidden;margin-top:9px}.progress-fill{height:100%;width:0;background:#315efb;transition:width .2s}.progress-text{color:#687385;font-size:13px;margin-top:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"
                 + ".task-root{margin:12px 0 21px}.task-root>summary{background:#eaf0ff;border:1px solid #dbe4ff;border-radius:11px;padding:12px 14px 12px 40px}.task-root>summary:before{left:14px}.task-root>summary h2{margin:0;display:inline-block}"
                 + ".task-category{margin:9px 0 9px 12px;border-left:2px solid #dce3ee;padding-left:10px}.task-category>summary{padding:8px 8px 8px 32px}.task-category>summary:before{left:8px;font-size:21px}.task-category>summary h3{font-size:15px;margin:0;display:inline-block}"
                 + ".task-view{display:none}body.view-time .time-view,body.view-platform .platform-view,body.all-tasks .time-view{display:block}"
@@ -2024,6 +2332,65 @@ public final class MainActivity extends Activity {
         html.append(">").append(cards);
         if (!wroteTitle) html.append("<div class='card meta'>暂无项目</div>");
         html.append("</section></details>");
+    }
+
+    private static String renderMaterialCenter(JSONArray materials, List<String> errors) {
+        StringBuilder html = new StringBuilder(pageStart("课程资料下载"));
+        html.append("<button class='back' onclick='DDLNative.closeMaterials()'>‹ 返回主页面</button>")
+                .append("<select id='materialView' class='view-select' onchange='changeView(this.value)'>")
+                .append("<option value='course'>按课程</option><option value='time'>按时间</option></select>")
+                .append("<div id='downloadProgress' class='card' style='display:none'><b>下载进度</b><div class='progress-track'><div id='downloadBar' class='progress-fill'></div></div><div id='downloadText' class='progress-text'>准备下载</div></div>");
+        if (materials.length() == 0) {
+            html.append("<div class='card'>没有读取到允许下载的课程资料。</div>");
+        } else {
+            LinkedHashMap<String, List<JSONObject>> courses = new LinkedHashMap<>();
+            LinkedHashMap<String, List<JSONObject>> dates = new LinkedHashMap<>();
+            for (int i = 0; i < materials.length(); i++) {
+                JSONObject item = materials.optJSONObject(i);
+                if (item == null) continue;
+                String course = item.optString("course", "未标注课程");
+                String date = item.optString("date", "");
+                if (TextUtils.isEmpty(date)) date = "未标注时间";
+                courses.computeIfAbsent(course, key -> new ArrayList<>()).add(item);
+                dates.computeIfAbsent(date, key -> new ArrayList<>()).add(item);
+            }
+            html.append("<section class='material-view by-course'>");
+            appendMaterialGroups(html, courses);
+            html.append("</section><section class='material-view by-time'>");
+            appendMaterialGroups(html, dates);
+            html.append("</section><div class='actions'><button class='primary' onclick='download()'>下载已勾选资料</button></div>");
+        }
+        if (!errors.isEmpty()) {
+            html.append("<h2>读取告示</h2>");
+            for (String error : errors) html.append("<div class='card error'>")
+                    .append(escape(error)).append("</div>");
+        }
+        html.append("<script>function changeView(v){document.body.classList.remove('by-course','by-time');document.body.classList.add(v==='time'?'by-time':'by-course')}"
+                + "function updateDownloadProgress(p,n,t,name){let box=document.getElementById('downloadProgress');box.style.display='block';document.getElementById('downloadBar').style.width=p+'%';document.getElementById('downloadText').textContent=(t?n+'/'+t+' · ':'')+(name||'准备下载')}"
+                + "function group(box){box.closest('details').querySelectorAll('.material-item').forEach(x=>x.checked=box.checked)}"
+                + "function download(){let root=document.querySelector(document.body.classList.contains('by-time')?'.material-view.by-time':'.material-view.by-course'),ids=[...new Set([...root.querySelectorAll('.material-item:checked')].map(x=>x.value))];if(!ids.length){alert('请先勾选资料');return}DDLNative.downloadSelectedMaterials(JSON.stringify(ids))}changeView('course')</script>");
+        return html.append("</body></html>").toString();
+    }
+
+    private static void appendMaterialGroups(StringBuilder html,
+                                             LinkedHashMap<String, List<JSONObject>> groups) {
+        for (Map.Entry<String, List<JSONObject>> group : groups.entrySet()) {
+            html.append("<details class='card tree' open><summary><b>")
+                    .append(escape(group.getKey())).append("</b><span class='meta'> · ")
+                    .append(group.getValue().size()).append(" 项</span></summary><div class='detail'>")
+                    .append("<label><input class='group-all' type='checkbox' onchange='group(this)'>全选本组</label>");
+            for (JSONObject item : group.getValue()) {
+                String reference = item.optString("reference_id");
+                html.append("<label class='material-row'><input class='material-item' type='checkbox' value='")
+                        .append(escape(reference)).append("'><span><span class='material-name'>")
+                        .append(escape(item.optString("name", "未命名资料"))).append("</span><span class='meta'>")
+                        .append(escape(item.optString("course")));
+                if (!TextUtils.isEmpty(item.optString("date"))) html.append(" · ")
+                        .append(escape(item.optString("date")));
+                html.append("</span></span></label>");
+            }
+            html.append("</div></details>");
+        }
     }
 
     private static String renderCourses(RadarSync.Result result) {
@@ -2148,6 +2515,8 @@ public final class MainActivity extends Activity {
             leavePlatformSettings();
         } else if (accountPanel.getVisibility() == View.VISIBLE) {
             closeDrawer();
+        } else if (materialCenterMode) {
+            leaveMaterialCenter();
         } else if (currentPlatform != null || authBar.getVisibility() == View.VISIBLE) {
             leaveAuthentication();
         } else if (webView.canGoBack()) {

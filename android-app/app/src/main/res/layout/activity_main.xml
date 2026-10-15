@@ -56,6 +56,7 @@
             <TextView android:id="@+id/drawerAccountSummary" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:text="当前账户：default" android:textColor="@color/primary" android:textSize="14sp" />
             <Button android:id="@+id/profileManageButton" android:layout_width="match_parent" android:layout_height="46dp" android:text="个人资料  ›" />
             <Button android:id="@+id/accountManageButton" android:layout_width="match_parent" android:layout_height="46dp" android:text="登录与切换账户  ›" />
+            <Button android:id="@+id/materialDownloadButton" android:layout_width="match_parent" android:layout_height="46dp" android:text="课程资料下载  ›" />
             <Button android:id="@+id/platformSettingsButton" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="18dp" android:backgroundTint="@color/primary" android:text="平台登录与同步  ›" android:textColor="#FFFFFF" />
         </LinearLayout>
     </ScrollView>

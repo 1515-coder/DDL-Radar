@@ -6,7 +6,7 @@ DDL Radar 用于汇总本人有权访问的在线课程、作业、测验、考�
 
 ## 版本与平台
 
-| 功能 | Windows 桌面版 | Android 1.0.3 |
+| 功能 | Windows 桌面版 | Android 1.0.4 |
 | --- | --- | --- |
 | 中国大学 MOOC | 支持 | 支持 |
 | 延河课堂 | 支持 | 支持 |
@@ -19,7 +19,14 @@ DDL Radar 用于汇总本人有权访问的在线课程、作业、测验、考�
 | Excel、CSV、JSON 导出 | 支持 | — |
 
 - Windows 版：从源码运行或通过 PyInstaller 构建 `MOOC-DDL.exe`。
-- Android 版：详细说明见 [`android-app/README.md`](android-app/README.md)。最新版本为 1.0.3。
+- Android 版：详细说明见 [`android-app/README.md`](android-app/README.md)。最新版本为 1.0.4。
+
+## Android 1.0.4 更新
+
+- 账户侧栏新增课程资料批量下载页，可按课程或资料时间分组选择。
+- 下载时显示整体进度、当前文件和完成数量。
+- 默认保存到系统 `Downloads/DDL Radar` 目录，也可使用系统选择器指定文件夹。
+- 域名解析失败时保守复检两次；连续失败后只清理网页资源缓存，不删除 Cookie、账户、课程或任务数据。
 
 ## Android 1.0.3 更新
 
