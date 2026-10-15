@@ -369,7 +369,10 @@ final class RadarSync {
                             String identity = course.name + "|" + title + "|" + due;
                             if (!seen.add(identity)) continue;
                             boolean completed = raw.optBoolean("submitted")
+                                    || raw.optInt("submissionCount") > 0
+                                    || raw.optInt("submission_count") > 0
                                     || raw.optInt("user_submit_count") > 0
+                                    || raw.optInt("submit_count") > 0
                                     || (raw.has("final_score") && !raw.isNull("final_score"))
                                     || (raw.has("user_submission") && !raw.isNull("user_submission"));
                             result.tasks.add(new Task("智园课堂", course.name,

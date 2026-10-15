@@ -167,7 +167,13 @@ def _task(
         return None
     submitted = bool(
         raw.get("submitted")
-        or raw.get("user_submit_count")
+        or _positive_count(
+            raw,
+            "submissionCount",
+            "submission_count",
+            "user_submit_count",
+            "submit_count",
+        )
         or raw.get("final_score") is not None
         or raw.get("user_submission")
     )
@@ -188,6 +194,17 @@ def _task(
         "total_score": raw.get("total_score"),
         "url": f"https://zy-eclass.bit.edu.cn/course/{course_id}/{section}",
     }
+
+
+def _positive_count(raw: dict[str, Any], *keys: str) -> bool:
+    """Return true only when a platform submission counter is greater than zero."""
+    for key in keys:
+        try:
+            if int(raw.get(key) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 
 def extract_deadlines(

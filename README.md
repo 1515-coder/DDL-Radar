@@ -6,7 +6,7 @@ DDL Radar 用于汇总本人有权访问的在线课程、作业、测验、考�
 
 ## 版本与平台
 
-| 功能 | Windows 桌面版 | Android 1.0.4 |
+| 功能 | Windows 桌面版 | Android 1.0.5 |
 | --- | --- | --- |
 | 中国大学 MOOC | 支持 | 支持 |
 | 延河课堂 | 支持 | 支持 |
@@ -18,8 +18,13 @@ DDL Radar 用于汇总本人有权访问的在线课程、作业、测验、考�
 | 课程资料下载 | 支持 | 支持智园课程资料 |
 | Excel、CSV、JSON 导出 | 支持 | — |
 
-- Windows 版：从 GitHub Releases 下载 `DDL-Radar-Windows-1.0.4.exe`，或从源码通过 PyInstaller 构建 `MOOC-DDL.exe`。
-- Android 版：详细说明见 [`android-app/README.md`](android-app/README.md)。最新版本为 1.0.4。
+- Windows 版：从 GitHub Releases 下载 `DDL-Radar-Windows-1.0.5.exe`，或从源码通过 PyInstaller 构建 `MOOC-DDL.exe`。
+- Android 版：详细说明见 [`android-app/README.md`](android-app/README.md)。最新版本为 1.0.5。
+
+## 1.0.5 更新
+
+- 修正智园课堂作业、测验和考试的完成状态：只要成功提交过一次即视为已完成，不再要求用满允许答题次数。
+- 兼容 `submissionCount` 及多个历史提交计数字段；零分但已提交的任务同样正确识别为已完成。
 
 ## Android 1.0.4 更新
 

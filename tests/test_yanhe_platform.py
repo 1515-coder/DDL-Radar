@@ -37,6 +37,41 @@ def test_deadline_normalization() -> None:
     assert task["completed"] is False
 
 
+def test_exam_is_completed_after_first_successful_submission() -> None:
+    course = {"name": "电路", "zhiyuan_id": "34567"}
+    task = _task(
+        {
+            "id": 10,
+            "title": "阶段测验",
+            "deadline": "2026-10-10T15:59:00Z",
+            "submissionCount": 1,
+            "submit_times": 3,
+        },
+        course,
+        "exam",
+        "exam#/",
+    )
+    assert task is not None
+    assert task["completed"] is True
+
+
+def test_zero_string_submission_count_is_not_completed() -> None:
+    course = {"name": "电路", "zhiyuan_id": "34567"}
+    task = _task(
+        {
+            "id": 11,
+            "title": "尚未作答",
+            "deadline": "2026-10-10T15:59:00Z",
+            "submissionCount": "0",
+        },
+        course,
+        "exam",
+        "exam#/",
+    )
+    assert task is not None
+    assert task["completed"] is False
+
+
 class _Response:
     def __init__(self, payload=None, status=200) -> None:
         self._payload = payload or {}
