@@ -23,6 +23,7 @@ from playwright.sync_api import (
 )
 
 HOME_URL = "https://www.icourse163.org/"
+LOGIN_URL = "https://www.icourse163.org/home.htm"
 COURSE_CENTER_URL = "https://www.icourse163.org/home.htm#/home/course"
 DEFAULT_PROFILE_DIR = Path(".data/browser-profile")
 LOGIN_MARKER = ".login-complete"
@@ -55,11 +56,12 @@ def _launch_context(
         locale="zh-CN",
         timezone_id="Asia/Shanghai",
         extra_http_headers=DEFAULT_HEADERS,
+        ignore_default_args=["--enable-automation"],
         args=["--disable-blink-features=AutomationControlled"],
     )
 
 
-def login(url: str = HOME_URL, profile_dir: Path = DEFAULT_PROFILE_DIR) -> None:
+def login(url: str = LOGIN_URL, profile_dir: Path = DEFAULT_PROFILE_DIR) -> None:
     """在持久化浏览器配置中手动登录。"""
     profile_dir.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
@@ -101,7 +103,10 @@ def login_until_authenticated(
     with sync_playwright() as playwright:
         context = _launch_context(playwright, profile_dir, headless=False)
         page = context.pages[0] if context.pages else context.new_page()
-        page.goto(f"{HOME_URL}?forcelogin=true", wait_until="domcontentloaded")
+        # The root-page forced-login dialog can stall while requesting an SMS
+        # code.  The desktop home page uses the current login component and is
+        # also the entry point observed in successful browser sessions.
+        page.goto(f"{LOGIN_URL}?forcelogin=true", wait_until="domcontentloaded")
         if wait_for_confirmation is not None:
             wait_for_confirmation()
         deadline = time.monotonic() + timeout_seconds
