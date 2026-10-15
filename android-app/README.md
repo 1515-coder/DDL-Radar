@@ -29,7 +29,7 @@ Android 版在开发过程中使用了 **OpenAI Codex** 辅助进行代码草拟
 
 ## 安装
 
-1. 从 GitHub Releases 下载 `DDL-Radar-1.0.4.apk`。
+1. 从 GitHub Releases 下载 `DDL-Radar-Android-1.0.4.apk`。
 2. 将 APK 发送到 Android 手机并打开。
 3. 如果系统阻止安装，请仅对当前文件管理器临时允许“安装未知应用”。
 4. 安装完成后可关闭该授权。
